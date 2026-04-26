@@ -10,6 +10,7 @@ import { assertPriceChangeAllowed, loadPriceSafetyConfig, previewPriceChange, re
 import { loadSafeModeConfig, saveSafeModeConfig } from './safe-mode';
 import { resolveEmailAliasFill } from './email-alias-fill';
 import { buildFinishedDealsUrl } from '../lib/graytag-fill';
+import { DEFAULT_MANAGEMENT_CACHE_TTL_MS, isAutoSessionManagementRequest, managementCache, shouldForceManagementRefresh } from './management-cache';
 
 const EMAIL_SERVER = "http://127.0.0.1:3001";
 const app = new Hono();
@@ -502,13 +503,14 @@ app.post('/my/management', async (c) => {
   const cookieStr = buildCookieStr(cookies);
   const authedHeaders = (referer: string) => ({ ...BASE_HEADERS, Cookie: cookieStr, Referer: referer });
 
-  // 쿠키 유효성 확인
-  const testResp = await rateLimitedFetch('https://graytag.co.kr/ws/borrower/findBorrowerDeals?finishedDealIncluded=false&page=1&rows=1',
-    { headers: authedHeaders('https://graytag.co.kr/borrower/deal/list'), redirect: 'manual' });
-  if (testResp.status === 302 || testResp.status === 301)
-    return c.json({ error: '쿠키가 만료됐어요.', code: 'COOKIE_EXPIRED' }, 401);
+  const loadManagementFresh = async () => {
+    // 쿠키 유효성 확인
+    const testResp = await rateLimitedFetch('https://graytag.co.kr/ws/borrower/findBorrowerDeals?finishedDealIncluded=false&page=1&rows=1',
+      { headers: authedHeaders('https://graytag.co.kr/borrower/deal/list'), redirect: 'manual' });
+    if (testResp.status === 302 || testResp.status === 301) {
+      throw new Error('쿠키가 만료됐어요.');
+    }
 
-  try {
     // 무한스크롤 완전 소진: page 반복으로 모든 거래 가져오기
     // - findAfterUsingLenderDeals: 이용중(Using) 파티원 - 핵심 데이터
     // - findBeforeUsingLenderDeals: 판매중/전달중 등 미이용 상태
@@ -726,7 +728,7 @@ app.post('/my/management', async (c) => {
       }
     }
 
-    return c.json({
+    return {
       services,
       onSaleByKeepAcct,
       summary: {
@@ -738,8 +740,31 @@ app.post('/my/management', async (c) => {
       },
       cookieSource: body?.JSESSIONID?.trim() ? 'manual' : 'session-keeper',
       updatedAt: new Date().toISOString(),
-    });
-  } catch (e: any) { return c.json({ error: e.message }, 500); }
+    };
+  };
+
+  try {
+    if (isAutoSessionManagementRequest(body)) {
+      const cached = await managementCache.get('auto-session', loadManagementFresh, {
+        forceRefresh: shouldForceManagementRefresh(body, c.req.query('refresh'), c.req.header('cache-control')),
+      });
+      const response = c.json({
+        ...cached.data,
+        cache: {
+          status: cached.cacheStatus,
+          updatedAt: new Date(cached.updatedAt).toISOString(),
+          ttlMs: DEFAULT_MANAGEMENT_CACHE_TTL_MS,
+        },
+      });
+      response.headers.set('X-Management-Cache', cached.cacheStatus);
+      return response;
+    }
+
+    return c.json(await loadManagementFresh());
+  } catch (e: any) {
+    if (e?.message === '쿠키가 만료됐어요.') return c.json({ error: e.message, code: 'COOKIE_EXPIRED' }, 401);
+    return c.json({ error: e.message }, 500);
+  }
 });
 
 // 글 작성 - 상품 등록
