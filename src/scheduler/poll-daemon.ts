@@ -15,6 +15,11 @@ const BASE_HEADERS = {
   'Referer': 'https://graytag.co.kr/lender/deal/list',
 };
 
+export function buildPollDealsUrl(page = 1, rows = 200): string {
+  // Graytag 판매내역 now only exposes current 판매중 rows when "종료된 거래 포함" is enabled.
+  return `https://graytag.co.kr/ws/lender/findBeforeUsingLenderDeals?finishedDealIncluded=true&sorting=Latest&page=${page}&rows=${rows}`;
+}
+
 function sessionCookieMtimeMs(): number | null {
   try {
     if (!existsSync(POLL_SESSION_PATH)) return null;
@@ -114,7 +119,7 @@ async function pollGraytag() {
     const headers = { ...BASE_HEADERS, Cookie: cookieStr };
 
     const resp = await fetch(
-      'https://graytag.co.kr/ws/lender/findBeforeUsingLenderDeals?finishedDealIncluded=false&sorting=Latest&page=1&rows=200',
+      buildPollDealsUrl(),
       { headers }
     );
     if (!resp.ok) {
