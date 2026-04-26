@@ -10,6 +10,6 @@ describe('PollDaemon Graytag deal list URL', () => {
     expect(url).not.toContain('finishedDealIncluded=false');
     expect(url).toContain('sorting=Latest');
     expect(url).toContain('page=1');
-    expect(url).toContain('rows=200');
+    expect(url).toContain('rows=50');
   });
 });
