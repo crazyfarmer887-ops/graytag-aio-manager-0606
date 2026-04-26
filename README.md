@@ -1,43 +1,36 @@
 # Website
 
-React + Vite + Hono + Tailwind + Cloudflare Workers
+React + Vite + Hono + Tailwind + Node.js local server
 
 ## Project Structure
 
 - `src/web/` — React frontend: pages, components, styles, hooks
-- `src/api/` — Hono API server (`/api/*`), database schema and migrations
+- `src/api/` — Hono API server (`/api/*`)
 - `public/` — Static assets (favicon, og-image, logo)
+- `server.ts` — Local Node server that serves the API and the built frontend
 
 ## Quick Start
 
 ```bash
 # Install dependencies
-bun install
+npm install
 
-# Generate types and run migrations
-bun cf-typegen
-bun db:generate
-bun db:migrate
+# Build the frontend
+npm run build
 
-# Start dev server
-bun dev
+# Start the local server
+npm run start
 ```
 
-## shadcn/ui
+The app will run at `http://localhost:3000` by default.
 
-Add components you need, customize them however you want.
+## Dev Mode
 
 ```bash
-bun x shadcn@latest add button card dialog
+npm run dev
 ```
 
-Components land in `src/web/components/ui/`, import with `@/components/ui/button`.
-
-```tsx
-import { Button } from "@/components/ui/button"
-
-<Button variant="outline">Click me</Button>
-```
+`dev` runs the same Node server through `tsx`.
 
 ## Routing
 
@@ -52,23 +45,12 @@ import { Route, Switch } from "wouter";
 </Switch>
 ```
 
-## Database
-
-Uses [Drizzle ORM](https://orm.drizzle.team/) with Cloudflare D1.
-
-```bash
-bun db:generate       # Generate migrations from schema
-bun db:migrate        # Apply migrations locally
-```
-
-Schema is in `src/api/database/schema.ts`, migrations in `src/api/migrations/`.
-
 ## API
 
-Backend uses [Hono](https://hono.dev/) on Cloudflare Workers. All routes are under `/api/*` in `src/api/index.ts`.
+Backend uses [Hono](https://hono.dev/) on Node.js. All routes are mounted under `/api/*` in `src/api/index.ts`.
 
 ```ts
-app.get('/api/hello', (c) => c.json({ message: 'Hello' }));
+app.get('/ping', (c) => c.json({ message: 'Hello' }));
 ```
 
 ## Config

@@ -1,18 +1,26 @@
 import { useState, useEffect, useRef } from "react";
-import { KeyRound, PartyPopper, CheckCircle2, KeySquare, Loader2, AlertTriangle, Trophy, Info, PenLine, Check, X, Square, Clock } from "lucide-react";
+import { KeyRound, PartyPopper, CheckCircle2, KeySquare, Loader2, AlertTriangle, Trophy, Info, PenLine, Check, X, Square, Clock, ArrowLeftRight, Type, Mail, Link } from "lucide-react";
 
+interface SlAlias { id: number; email: string; enabled: boolean; nb_forward: number; pin?: string | null; hasPin?: boolean; }
+
+const AUTO_COOKIE_ID = '__session_keeper__';
+const AUTO_COOKIE: CookieSet = { id: AUTO_COOKIE_ID, label: '자동 (Session Keeper)', AWSALB: '', AWSALBCORS: '', JSESSIONID: '__auto__' };
 const STORAGE_KEY = 'graytag_cookies_v2';
 interface CookieSet { id: string; label: string; AWSALB: string; AWSALBCORS: string; JSESSIONID: string; }
-const loadCookies = (): CookieSet[] => { try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); } catch { return []; } };
+const loadCookies = (): CookieSet[] => { try { return [AUTO_COOKIE, ...JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]')]; } catch { return [AUTO_COOKIE]; } };
 
+const DEFAULT_SERVICE_KEY = 'disney';
 const SERVICES = [
+  { key: 'wavve',   label: '웨이브',       category: 'wavve',     color: '#006BE9', bg: '#EEF5FF', logo: '/logos/wavve.png' },
   { key: 'disney',  label: '디즈니플러스', category: 'disney',    color: '#1A3E8C', bg: '#EEF3FF', logo: '/logos/disney.png' },
   { key: 'watcha',  label: '왓챠플레이',   category: 'WatchaPlay', color: '#FF153C', bg: '#FFF0F3', logo: '/logos/watcha.png' },
   { key: 'netflix', label: '넷플릭스',    category: 'Netflix',   color: '#E50914', bg: '#FFF0F0', logo: '/logos/netflix.png' },
   { key: 'tving',   label: '티빙',        category: 'tving',     color: '#FF153C', bg: '#FFF0F3', logo: '/logos/tving.png' },
 ];
+const DEFAULT_SVC_LABEL = SERVICES.find(s => s.key === DEFAULT_SERVICE_KEY)?.label || SERVICES[0].label;
 
 type Step = 'form' | 'progress' | 'keepAcct' | 'done';
+type PriceMode = 'total' | 'daily';
 
 interface ProgressItem {
   index: number;
@@ -27,56 +35,46 @@ interface PriceRank {
   total: number;
 }
 
+const makeDefaultTitle = (svcLabel: string) => `✅ 이메일 코드 언제든지 셀프인증 가능! ✅ ${svcLabel} 프리미엄!`;
+
 export default function WritePage() {
   const cookies = loadCookies();
   const [selectedId, setSelectedId] = useState(cookies[0]?.id || '');
   const [step, setStep] = useState<Step>('form');
 
   // 폼
-  const [service, setService] = useState('disney');
+  const [service, setService] = useState(DEFAULT_SERVICE_KEY);
   const [endDate, setEndDate] = useState('');
   const [price, setPrice] = useState('');
+  const [dailyPrice, setDailyPrice] = useState('');
+  const [priceMode, setPriceMode] = useState<PriceMode>('total');
   const [repeat, setRepeat] = useState(1);
+  const [title, setTitle] = useState(() => makeDefaultTitle(DEFAULT_SVC_LABEL));
 
-  const makeDefaultDesc = (svcLabel: string) => `${svcLabel} 프리미엄 한 달 계정입니다.
-손수 만든 국산 계정이므로 안심하고 사용하셔도 됩니다.
+  const makeDefaultDesc = (svcLabel: string) => `✅ 이메일 코드 언제든지 셀프인증 가능! ✅ ${svcLabel} 프리미엄!\n구매 시 제공되는 "직접 운영하는" 이메일 코드 확인 사이트를 통해 언제든지 이메일을 확인하실 수 있으십니다!\n\n❤️ 1 1 1 원칙을 꼭 지켜주세요 ❤️\n1인 1기기 1계정 원칙이며 어길 시 약정에 의거 위약금 부과됩니다!`;
 
-[ 로그인 관련 ]
-아이디 비밀번호 입력시 자동으로 로그인 완료되며,
-만약 로그인 시도간 이메일 인증 필요시
-구매 이후 생긴 채팅방에
-본인의 이메일을 남겨주시면 앞으로 인증코드 메일을 보내주신 이메일로 자동 전송되도록 설정 도와드리고 있습니다.
+  const makeDefaultKeepMemo = (emailId?: number|string, pin?: string) => {
+    const eid = emailId || '{EMAIL_ID}';
+    const p = pin || '{PIN}';
+    return `아래 내용 꼭 읽어주세요! 로그인 관련 내용입니다!!\n로그인 시도 간 필요한 이메일 코드는 아래 사이트에서 언제든지 셀프인증 가능합니다!\nhttps://email-verify.xyz/email/mail/${eid}\n사이트에서 필요한 핀번호는 : ${p}입니다!\n\n프로필을 만드실 때, 본명에서 가운데 글자를 별(*)로 가려주세요!\n만약, 특수기호 사용이 불가할 경우 본명으로 설정 부탁드립니다! 예)홍길동 또는 홍*동\n만약, 접속 시 기본 프로필 1개만  있거나 자리가 꽉 찼는데 기본 프로필이 있다면 그걸 먼저 수정하고 사용하시면 되겠습니다!\n\n🎬 성인인증은 필요하시면 직접 하셔야 합니다! 🎬\n\n즐거운 시청되세요!`;
+  };
 
-!!! 1 1 1 원칙을 꼭 지켜주세요 !!!
-1인 1기기 1계정 원칙이며 어길 시 약정에 의거 위약금 부과되니 인지바랍니다.`;
-
-  const makeDefaultKeepMemo = () => `프로필 생성하시고 사용하셔야 하며,
-본명의 가운데 이름을 별표 처리하신 뒤 만드시면 됩니다.
-예: 홍길동 -> 홍*동
-미준수시 그레이태그 약정에 의거 거래 취소로 인한 위약금 부과되니 꼭 준수 부탁드립니다.
-
-[ 로그인 관련 ]
-아이디 비밀번호 입력시 자동으로 로그인 완료되며,
-만약 로그인 시도간 이메일 인증 필요시
-구매 이후 생긴 채팅방에
-본인의 이메일을 남겨주시면 앞으로 인증코드 메일을 보내주신 이메일로 자동 전송되도록 설정 도와드리고 있습니다.
-
-!!! 1 1 1 원칙을 꼭 지켜주세요 !!!
-1인 1기기 1계정 원칙이며 어길 시 약정에 의거 위약금 부과되니 인지바랍니다.`;
-
-  const currentSvcLabel = SERVICES.find(s => s.key === service)?.label || '';
-  const [description, setDescription] = useState(() => makeDefaultDesc(SERVICES[0].label));
+  const [description, setDescription] = useState(() => makeDefaultDesc(DEFAULT_SVC_LABEL));
 
   // 계정 전달
   const [keepAcct, setKeepAcct] = useState('');
   const [keepPasswd, setKeepPasswd] = useState('');
   const [keepMemo, setKeepMemo] = useState(() => makeDefaultKeepMemo());
+  const [slAliases, setSlAliases] = useState<SlAlias[]>([]);
+  const [slLoading, setSlLoading] = useState(false);
+  const [selectedAliasId, setSelectedAliasId] = useState<number | null>(null);
+  const [keepPin, setKeepPin] = useState('');
 
   // 진행 상태
   const [progressList, setProgressList] = useState<ProgressItem[]>([]);
   const [doneProductUsids, setDoneProductUsids] = useState<string[]>([]);
 
-  // 실시간 순위
+  // 실시간 순위 (일당 가격 기준)
   const [priceInfo, setPriceInfo] = useState<PriceRank | null>(null);
   const [priceLoading, setPriceLoading] = useState(false);
   const priceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -84,20 +82,52 @@ export default function WritePage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // 일당 가격 계산
-  const calcDaily = () => {
-    const p = parseInt(price.replace(/,/g, '')) || 0;
+  // 남은 일수 계산
+  const calcDays = () => {
+    if (!endDate) return 0;
     const today = new Date(); today.setHours(0,0,0,0);
     const end = new Date(endDate);
-    const days = Math.ceil((end.getTime() - today.getTime()) / (1000*60*60*24));
-    if (days <= 0 || p <= 0) return null;
-    return { daily: Math.ceil(p / days), days };
+    return Math.ceil((end.getTime() - today.getTime()) / (1000*60*60*24));
   };
-  const dailyInfo = calcDaily();
 
-  // 순위 실시간 조회
+  // 총 금액에서 일당 계산
+  const calcDailyFromTotal = () => {
+    const p = parseInt(price.replace(/,/g, '')) || 0;
+    const days = calcDays();
+    if (days <= 0 || p <= 0) return null;
+    return { daily: Math.ceil(p / days), days, total: p };
+  };
+
+  // 일당에서 총 금액 계산
+  const calcTotalFromDaily = () => {
+    const d = parseInt(dailyPrice.replace(/,/g, '')) || 0;
+    const days = calcDays();
+    if (days <= 0 || d <= 0) return null;
+    return { daily: d, days, total: d * days };
+  };
+
+  const calcInfo = priceMode === 'total' ? calcDailyFromTotal() : calcTotalFromDaily();
+  const finalTotalPrice = priceMode === 'total'
+    ? (parseInt(price.replace(/,/g, '')) || 0)
+    : (calcInfo?.total || 0);
+  const finalDailyPrice = calcInfo?.daily || 0;
+
+  // 모드 전환
+  const togglePriceMode = () => {
+    if (priceMode === 'total') {
+      const info = calcDailyFromTotal();
+      if (info) setDailyPrice(info.daily.toLocaleString());
+      setPriceMode('daily');
+    } else {
+      const info = calcTotalFromDaily();
+      if (info) setPrice(info.total.toLocaleString());
+      setPriceMode('total');
+    }
+  };
+
+  // ★ 순위 실시간 조회 — 일당 가격(pricePerDayNum) 기준으로 비교
   useEffect(() => {
-    if (!dailyInfo) { setPriceInfo(null); return; }
+    if (!calcInfo) { setPriceInfo(null); return; }
     if (priceTimer.current) clearTimeout(priceTimer.current);
     priceTimer.current = setTimeout(async () => {
       setPriceLoading(true);
@@ -105,13 +135,15 @@ export default function WritePage() {
         const res = await fetch(`/api/prices/${service}`);
         const json = await res.json() as any;
         const products: any[] = json.products || [];
-        const cheaper = products.filter(p => p.pricePerDayNum < dailyInfo.daily).length;
-        setPriceInfo({ rank: cheaper + 1, pricePerDayNum: dailyInfo.daily, total: json.count || products.length });
+        // 일당 가격 기준 순위: 내 일당가보다 낮은(저렴한) 상품 수 + 1
+        const myDaily = calcInfo.daily;
+        const cheaper = products.filter((p: any) => p.pricePerDayNum < myDaily).length;
+        setPriceInfo({ rank: cheaper + 1, pricePerDayNum: myDaily, total: json.count || products.length });
       } catch { setPriceInfo(null); }
       finally { setPriceLoading(false); }
     }, 500);
     return () => { if (priceTimer.current) clearTimeout(priceTimer.current); };
-  }, [price, endDate, service]);
+  }, [price, dailyPrice, endDate, service, priceMode]);
 
   const toGraytagDate = (dateStr: string) => {
     const d = new Date(dateStr);
@@ -131,7 +163,8 @@ export default function WritePage() {
     const cs = cookies.find(c => c.id === selectedId);
     if (!cs) { setError('계정을 선택해주세요'); return; }
     if (!endDate) { setError('종료일을 입력해주세요'); return; }
-    if (!price || parseInt(price.replace(/,/g,'')) < 1000) { setError('가격은 최소 1,000원입니다'); return; }
+    if (finalTotalPrice < 1000) { setError('가격은 최소 1,000원입니다'); return; }
+    if (!title.trim()) { setError('제목을 입력해주세요'); return; }
     if (!description.trim()) { setError('상품 설명을 입력해주세요'); return; }
 
     const count = Math.max(1, Math.min(repeat, 20));
@@ -146,8 +179,8 @@ export default function WritePage() {
       tempProductCategory: svc.category,
       endDate: toGraytagDate(endDate),
       priceType: 'Normal',
-      price: String(parseInt(price.replace(/,/g,''))),
-      name: `${svc.label} 파티 공유`,
+      price: String(finalTotalPrice),
+      name: title,
       sellingGuide: description,
       ...(service === 'netflix' ? { netflixSeatCount: '5', productCountryString: 'Domestic' } : {}),
     };
@@ -155,14 +188,13 @@ export default function WritePage() {
     const results: string[] = [];
 
     for (let i = 0; i < count; i++) {
-      // 현재 진행 중 표시
       setProgressList(prev => prev.map(p => p.index === i+1 ? { ...p, status: 'running' } : p));
 
       try {
         const res = await fetch('/api/post/create', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ AWSALB: cs.AWSALB, AWSALBCORS: cs.AWSALBCORS, JSESSIONID: cs.JSESSIONID, productModel }),
+          body: JSON.stringify({ ...(cs.id === AUTO_COOKIE_ID ? {} : { AWSALB: cs.AWSALB, AWSALBCORS: cs.AWSALBCORS, JSESSIONID: cs.JSESSIONID }), productModel }),
         });
         const json = await res.json() as any;
         if (!res.ok || !json.productUsid) throw new Error(json.error || '등록 실패');
@@ -173,13 +205,19 @@ export default function WritePage() {
         setProgressList(prev => prev.map(p => p.index === i+1 ? { ...p, status: 'error', error: e.message } : p));
       }
 
-      // 연속 등록 간 딜레이 (서버 부하 방지)
       if (i < count - 1) await new Promise(r => setTimeout(r, 800));
     }
 
     setDoneProductUsids(results);
-    // 성공한 게 있으면 계정 전달로 이동
     if (results.length > 0) {
+      // 이메일 별칭 목록 미리 로드
+      setSlLoading(true);
+      try {
+        const aliasRes = await fetch('/api/sl/aliases');
+        if (!aliasRes.ok) throw new Error('fetch failed'); const aliasJson = await aliasRes.json() as any;
+        setSlAliases((aliasJson.aliases || []).filter((a: SlAlias) => a.enabled));
+      } catch {}
+      setSlLoading(false);
       setTimeout(() => setStep('keepAcct'), 500);
     }
   };
@@ -197,7 +235,7 @@ export default function WritePage() {
         const res = await fetch('/api/post/keepAcct', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ AWSALB: cs.AWSALB, AWSALBCORS: cs.AWSALBCORS, JSESSIONID: cs.JSESSIONID, productUsid: usid, keepAcct, keepPasswd, keepMemo }),
+          body: JSON.stringify({ ...(cs.id === AUTO_COOKIE_ID ? {} : { AWSALB: cs.AWSALB, AWSALBCORS: cs.AWSALBCORS, JSESSIONID: cs.JSESSIONID }), productUsid: usid, keepAcct, keepPasswd, keepMemo }),
         });
         if (res.ok) successCount++;
       } catch {}
@@ -210,23 +248,17 @@ export default function WritePage() {
 
   const reset = () => {
     setStep('form'); setProgressList([]); setDoneProductUsids([]);
-    setPrice(''); setEndDate(''); setRepeat(1); setError(null);
-    setService('disney');
-    setDescription(makeDefaultDesc(SERVICES[0].label));
+    setPrice(''); setDailyPrice(''); setEndDate(''); setRepeat(1); setError(null);
+    setService(DEFAULT_SERVICE_KEY); setPriceMode('total');
+    setTitle(makeDefaultTitle(DEFAULT_SVC_LABEL));
+    setDescription(makeDefaultDesc(DEFAULT_SVC_LABEL));
     setKeepAcct(''); setKeepPasswd('');
     setKeepMemo(makeDefaultKeepMemo());
+    setKeepPin(''); setSelectedAliasId(null); setSlAliases([]);
   };
 
   // ── 쿠키 없음 ──────────────────────────────────────────────
-  if (cookies.length === 0) return (
-    <div style={{ padding: '20px 16px' }}>
-      <h1 style={{ fontSize: 22, fontWeight: 700, color: '#1E1B4B', margin: '0 0 16px' }}>✍️ 글 작성</h1>
-      <div style={{ background: '#EDE9FE', borderRadius: 16, padding: 20, textAlign: 'center' }}>
-        <KeyRound size={36} color="#C4B5FD" style={{ margin:"0 auto 10px", display:"block" }} />
-        <div style={{ fontSize: 14, fontWeight: 600, color: '#7C3AED' }}>내 계정 탭에서 쿠키를 먼저 등록해주세요</div>
-      </div>
-    </div>
-  );
+  // 자동 쿠키가 항상 있으므로 빈 상태 가드 제거됨
 
   // ── 완료 ────────────────────────────────────────────────────
   if (step === 'done') {
@@ -256,8 +288,40 @@ export default function WritePage() {
   }
 
   // ── 계정 전달 ────────────────────────────────────────────────
+
+  // === keepAcct 단계: 계정 전달 안내 ===
+  // 참고: makeDefaultKeepMemo()는 {EMAIL_ID}, {PIN}을 포함하며,
+  // 실제 email 서비스와 연동 시 다음과 같이 수정:
+  // const memo = makeDefaultKeepMemo(emailId, pin);
+
   if (step === 'keepAcct') {
     const successCount = doneProductUsids.length;
+
+    // 이메일 별칭 선택 핸들러
+    const handleSelectAlias = (alias: SlAlias) => {
+      setSelectedAliasId(alias.id);
+      setKeepAcct(alias.email);
+      // PIN: API 응답 → localStorage(sl_alias_pin_{id}) → 수동 입력값 순으로 폴백
+      const lsPin = (() => { try { return localStorage.getItem(`sl_alias_pin_${alias.id}`) || ''; } catch { return ''; } })();
+      const autoPin = alias.pin || lsPin || keepPin.trim();
+      if (autoPin) {
+        setKeepPin(autoPin);
+        setKeepMemo(makeDefaultKeepMemo(alias.id, autoPin));
+      } else {
+        setKeepMemo(makeDefaultKeepMemo(alias.id));
+      }
+    };
+
+    // PIN 변경 시 keepMemo 자동 갱신
+    const handlePinChange = (newPin: string) => {
+      setKeepPin(newPin);
+      if (selectedAliasId && newPin.trim()) {
+        setKeepMemo(makeDefaultKeepMemo(selectedAliasId, newPin.trim()));
+      } else if (selectedAliasId) {
+        setKeepMemo(makeDefaultKeepMemo(selectedAliasId));
+      }
+    };
+
     return (
       <div style={{ padding: '20px 16px 0' }}>
         <div style={{ marginBottom: 16 }}>
@@ -275,16 +339,65 @@ export default function WritePage() {
 
         {error && <div style={{ background: '#FFF0F0', borderRadius: 12, padding: '10px 14px', marginBottom: 12, fontSize: 12, color: '#EF4444' }}>{error}</div>}
 
+        {/* 이메일 별칭 선택 */}
+        {slAliases.length > 0 && (
+          <div style={{ background: '#fff', borderRadius: 16, padding: 16, border: '1.5px solid #EDE9FE', boxShadow: '0 2px 12px rgba(167,139,250,0.08)', marginBottom: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#1E1B4B', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Link size={14} color="#A78BFA" /> 이메일 연동 (클릭하여 선택)
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 180, overflowY: 'auto' }}>
+              {slAliases.map(alias => {
+                const lsPin = (() => { try { return localStorage.getItem(`sl_alias_pin_${alias.id}`) || ''; } catch { return ''; } })();
+                const displayPin = alias.pin || lsPin;
+                return (
+                <button key={alias.id} onClick={() => handleSelectAlias(alias)} style={{
+                  display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px',
+                  borderRadius: 10, border: `1.5px solid ${selectedAliasId === alias.id ? '#A78BFA' : '#EDE9FE'}`,
+                  background: selectedAliasId === alias.id ? '#F5F3FF' : '#F8F6FF',
+                  cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', width: '100%',
+                }}>
+                  <Mail size={14} color={selectedAliasId === alias.id ? '#A78BFA' : '#9CA3AF'} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: selectedAliasId === alias.id ? '#7C3AED' : '#1E1B4B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {alias.email}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 1 }}>
+                      <span style={{ fontSize: 10, color: '#9CA3AF' }}>ID: {alias.id}</span>
+                      {displayPin
+                        ? <span style={{ fontSize: 9, fontWeight: 700, color: '#059669', background: '#F0FDF4', borderRadius: 4, padding: '1px 5px' }}>PIN: {displayPin}</span>
+                        : <span style={{ fontSize: 9, color: '#D97706', background: '#FFFBEB', borderRadius: 4, padding: '1px 5px' }}>PIN 미확인</span>
+                      }
+                    </div>
+                  </div>
+                  {selectedAliasId === alias.id && <Check size={14} color="#A78BFA" strokeWidth={3} />}
+                </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        {slLoading && <div style={{ fontSize: 12, color: '#C4B5FD', marginBottom: 12 }}>이메일 목록 로딩 중...</div>}
+
         <div style={{ background: '#fff', borderRadius: 16, padding: 18, border: '1.5px solid #EDE9FE', boxShadow: '0 2px 12px rgba(167,139,250,0.08)', marginBottom: 14 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: '#1E1B4B', marginBottom: 14, display:"flex", alignItems:"center", gap:8 }}><KeySquare size={16} color="#A78BFA" /> 계정 정보</div>
           <label style={labelStyle}>아이디 (이메일) *</label>
           <input value={keepAcct} onChange={e => setKeepAcct(e.target.value)} placeholder="example@email.com" style={inputStyle} />
           <label style={labelStyle}>비밀번호 *</label>
           <input value={keepPasswd} onChange={e => setKeepPasswd(e.target.value)} placeholder="비밀번호" style={inputStyle} />
-          <label style={labelStyle}>추가 안내 (선택)</label>
+
+          {/* PIN 입력 */}
+          <label style={labelStyle}>셀프인증 핀번호</label>
+          <input value={keepPin} onChange={e => handlePinChange(e.target.value)} placeholder="예: 1234" style={inputStyle} />
+          {selectedAliasId && keepPin && (
+            <div style={{ background: '#F0FDF4', borderRadius: 8, padding: '8px 10px', marginTop: -4, marginBottom: 10, fontSize: 11, color: '#059669', display: 'flex', alignItems: 'center', gap: 5 }}>
+              <CheckCircle2 size={12} /> 인증 링크 자동 생성됨
+            </div>
+          )}
+
+          <label style={labelStyle}>추가 안내</label>
           <textarea value={keepMemo} onChange={e => setKeepMemo(e.target.value)}
-            placeholder={'예: 인증코드는 채팅방으로 요청해주세요.\n본인 프로필만 사용 부탁드립니다.'}
-            style={{ ...inputStyle, height: 85, resize: 'vertical' }} />
+            placeholder={'이메일 및 로그인 관련 안내가 기본값으로 포함됩니다'}
+            style={{ ...inputStyle, height: 120, resize: 'vertical', fontSize: 12 }} />
         </div>
 
         <div style={{ display: 'flex', gap: 10 }}>
@@ -309,7 +422,6 @@ export default function WritePage() {
       <div style={{ padding: '20px 16px 0' }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, color: '#1E1B4B', margin: '0 0 16px', display:"flex", alignItems:"center", gap:10 }}><Loader2 size={22} color="#A78BFA" style={{ animation:"spin 1s linear infinite" }} /> 등록 중...</h1>
 
-        {/* 전체 진행률 바 */}
         <div style={{ background: '#fff', borderRadius: 16, padding: '16px', marginBottom: 14, border: '1.5px solid #EDE9FE' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#6B7280', marginBottom: 8 }}>
             <span>{done}/{total} 완료</span>
@@ -321,7 +433,6 @@ export default function WritePage() {
           {errors > 0 && <div style={{ fontSize: 11, color: '#EF4444', marginTop: 6, display:'flex', alignItems:'center', gap:4 }}><AlertTriangle size={11} />{errors}개 실패</div>}
         </div>
 
-        {/* 아이템별 상태 */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {progressList.map(item => (
             <div key={item.index} style={{
@@ -389,11 +500,16 @@ export default function WritePage() {
           {SERVICES.map(s => (
             <button key={s.key} onClick={() => {
               setService(s.key);
-              // 설명이 디폴트 텍스트이면 카테고리명만 업데이트
+              // 제목이 기본값이면 서비스명 교체
+              setTitle(prev => {
+                const prevLabel = SERVICES.find(sv => sv.key === service)?.label || '';
+                if (prev === makeDefaultTitle(prevLabel)) return makeDefaultTitle(s.label);
+                return prev;
+              });
               setDescription(prev => {
                 const prevLabel = SERVICES.find(sv => sv.key === service)?.label || '';
-                if (prev.startsWith(prevLabel)) return makeDefaultDesc(s.label);
-                return prev; // 사용자가 수정한 경우 유지
+                if (prev === makeDefaultDesc(prevLabel)) return makeDefaultDesc(s.label);
+                return prev;
               });
             }} style={{
               padding: '10px 12px', borderRadius: 12, cursor: 'pointer',
@@ -413,31 +529,83 @@ export default function WritePage() {
         </div>
       </div>
 
-      {/* ② 기간 + 가격 */}
+      {/* ② 제목 */}
+      <div style={card}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+          <label style={{ ...labelStyle, marginBottom: 0, display: 'flex', alignItems: 'center', gap: 5 }}>
+            <Type size={12} color="#A78BFA" /> 상품 제목 *
+          </label>
+          <button onClick={() => setTitle(makeDefaultTitle(SERVICES.find(s => s.key === service)?.label || ''))} style={{
+            background: '#EDE9FE', border: 'none', borderRadius: 8, padding: '3px 8px',
+            fontSize: 10, color: '#7C3AED', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+          }}>기본값</button>
+        </div>
+        <input type="text" value={title}
+          onChange={e => setTitle(e.target.value)}
+          placeholder="상품 제목을 입력하세요" style={inputStyle} />
+        <div style={{ fontSize: 10, color: '#C4B5FD', textAlign: 'right', marginTop: -6 }}>{title.length}자</div>
+      </div>
+
+      {/* ③ 기간 + 가격 */}
       <div style={card}>
         <label style={labelStyle}>상품 종료일 *</label>
         <input type="date" value={endDate} min={tomorrow()}
           onChange={e => setEndDate(e.target.value)} style={inputStyle} />
 
-        <label style={labelStyle}>판매 가격 (원) *</label>
-        <input type="text" inputMode="numeric" value={price}
-          onChange={e => {
-            const raw = e.target.value.replace(/[^0-9]/g,'');
-            setPrice(raw ? Number(raw).toLocaleString() : '');
-          }}
-          placeholder="예: 4,500" style={inputStyle} />
+        {/* 가격 모드 토글 */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+          <label style={{ ...labelStyle, marginBottom: 0 }}>
+            {priceMode === 'total' ? '총 판매 가격 (원) *' : '일당 가격 (원) *'}
+          </label>
+          <button onClick={togglePriceMode} style={{
+            background: '#EDE9FE', border: 'none', borderRadius: 8, padding: '4px 10px',
+            fontSize: 11, color: '#7C3AED', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+            display: 'flex', alignItems: 'center', gap: 4,
+          }}>
+            <ArrowLeftRight size={11} />
+            {priceMode === 'total' ? '일당으로 입력' : '총액으로 입력'}
+          </button>
+        </div>
 
-        {/* 일당 가격 + 순위 */}
-        {(dailyInfo || priceLoading) && (
+        {priceMode === 'total' ? (
+          <input type="text" inputMode="numeric" value={price}
+            onChange={e => {
+              const raw = e.target.value.replace(/[^0-9]/g,'');
+              setPrice(raw ? Number(raw).toLocaleString() : '');
+            }}
+            placeholder="예: 4,500" style={inputStyle} />
+        ) : (
+          <input type="text" inputMode="numeric" value={dailyPrice}
+            onChange={e => {
+              const raw = e.target.value.replace(/[^0-9]/g,'');
+              setDailyPrice(raw ? Number(raw).toLocaleString() : '');
+            }}
+            placeholder="예: 150" style={inputStyle} />
+        )}
+
+        {/* 계산 결과 + 순위 (일당 가격 기준) */}
+        {(calcInfo || priceLoading) && (
           <div style={{ background: '#F8F6FF', borderRadius: 12, padding: '12px 14px', marginTop: -4 }}>
-            {dailyInfo && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: priceInfo ? 8 : 0 }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-                  <span style={{ fontSize: 11, color: '#9CA3AF' }}>일당</span>
-                  <span style={{ fontSize: 20, fontWeight: 700, color: '#A78BFA' }}>{dailyInfo.daily.toLocaleString()}원</span>
-                </div>
-                <span style={{ fontSize: 11, color: '#9CA3AF' }}>{dailyInfo.days}일 기준</span>
-              </div>
+            {calcInfo && (
+              <>
+                {priceMode === 'total' ? (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: priceInfo ? 8 : 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                      <span style={{ fontSize: 11, color: '#9CA3AF' }}>일당</span>
+                      <span style={{ fontSize: 20, fontWeight: 700, color: '#A78BFA' }}>{calcInfo.daily.toLocaleString()}원</span>
+                    </div>
+                    <span style={{ fontSize: 11, color: '#9CA3AF' }}>{calcInfo.days}일 기준</span>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: priceInfo ? 8 : 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                      <span style={{ fontSize: 11, color: '#9CA3AF' }}>총 금액</span>
+                      <span style={{ fontSize: 20, fontWeight: 700, color: '#A78BFA' }}>{calcInfo.total.toLocaleString()}원</span>
+                    </div>
+                    <span style={{ fontSize: 11, color: '#9CA3AF' }}>{calcInfo.days}일 × {calcInfo.daily.toLocaleString()}원</span>
+                  </div>
+                )}
+              </>
             )}
             {priceLoading && <div style={{ fontSize: 11, color: '#C4B5FD' }}>순위 계산 중...</div>}
             {!priceLoading && priceInfo && (
@@ -450,6 +618,7 @@ export default function WritePage() {
                   {priceInfo.rank}위
                 </div>
                 <span style={{ fontSize: 12, color: '#6B7280' }}>/ {priceInfo.total}개 중</span>
+                <span style={{ fontSize: 11, color: '#9CA3AF' }}>(일당가 기준)</span>
                 {priceInfo.rank === 1 && <span style={{ fontSize: 12, color: '#059669', fontWeight: 700 }}><Trophy size={12} style={{ marginRight:3 }} />최저가!</span>}
                 {priceInfo.rank > 5 && <span style={{ fontSize: 11, color: '#9CA3AF' }}>가격을 낮춰보세요</span>}
               </div>
@@ -458,7 +627,7 @@ export default function WritePage() {
         )}
       </div>
 
-      {/* ③ 상품 설명 */}
+      {/* ④ 상품 설명 */}
       <div style={card}>
         <label style={labelStyle}>상품 설명 *</label>
         <div style={{ fontSize: 11, color: '#C4B5FD', marginBottom: 6 }}>
@@ -470,7 +639,7 @@ export default function WritePage() {
         <div style={{ fontSize: 11, color: '#C4B5FD', textAlign: 'right', marginTop: -6 }}>{description.length}자</div>
       </div>
 
-      {/* ④ 반복 횟수 */}
+      {/* ⑤ 반복 횟수 */}
       <div style={card}>
         <label style={labelStyle}>작성 반복 횟수</label>
         <div style={{ fontSize: 11, color: '#9CA3AF', marginBottom: 10 }}>
@@ -495,7 +664,6 @@ export default function WritePage() {
           }}>+</button>
         </div>
 
-        {/* 빠른 선택 */}
         <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
           {[1,2,3,5,10].map(n => (
             <button key={n} onClick={() => setRepeat(n)} style={{
@@ -522,6 +690,7 @@ export default function WritePage() {
         boxShadow: '0 4px 16px rgba(167,139,250,0.35)',
       }}>
         📝 {repeat > 1 ? `${repeat}개 등록하기` : '글 등록하기'}
+        {calcInfo && priceMode === 'daily' && ` (${calcInfo.total.toLocaleString()}원)`}
       </button>
 
       <div style={{ height: 20 }} />

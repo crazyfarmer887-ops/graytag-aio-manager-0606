@@ -1,6 +1,6 @@
-import { } from "drizzle-orm/sqlite-core"
-
 /**
- * You can write your custom database schema here.
- * Use this file for also re-exporting any generated schema for drizzle to generate proper migrations.
+ * Database schema placeholder.
+ *
+ * This project now runs locally on Node, and the database layer is currently
+ * unused. Add Drizzle tables here if you decide to persist data later.
  */

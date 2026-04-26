@@ -78,3 +78,9 @@ body {
 /* scrollbar hide */
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* 채팅 페이지 풀스크린 — max-width 해제 */
+#root.chat-fullscreen {
+  max-width: 100% !important;
+  margin: 0 !important;
+}
