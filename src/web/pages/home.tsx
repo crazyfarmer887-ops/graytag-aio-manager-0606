@@ -4,6 +4,8 @@ import { MonthlyCalendarWidget } from "./profit";
 import { useLocation } from "wouter";
 import { CATEGORIES } from "../lib/constants";
 import { RefreshCw, ChevronRight, User, Loader2, TrendingUp, TrendingDown, Wallet, CheckCircle2, RotateCcw, Settings, Zap, ShieldAlert } from "lucide-react";
+import { Card, StatCard } from "../components/ui/card";
+import { StatusBadge } from "../components/ui/status-badge";
 
 // ─── 타입 ─────────────────────────────────────────────────────
 interface Member {
@@ -823,6 +825,55 @@ export default function HomePage() {
 
       {data && (
         <>
+          <section style={{ marginBottom: 18 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+              <h2 style={{ fontSize: 15, fontWeight: 900, color: 'var(--foreground)', margin: 0 }}>오늘 상태</h2>
+              <StatusBadge tone={sellerStatus?.ok ? 'success' : 'warning'}>{sellerStatus?.ok ? '운영 정상' : '확인 필요'}</StatusBadge>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <StatCard label="계정" value={`${totalAccounts}개`} helper="활성 운영 계정" tone="info" />
+              <StatCard label="파티원" value={`${totalUsing}/${totalMaxSlots}`} helper={`빈자리 ${Math.max(0, totalVacancy)}개`} tone={totalVacancy > 0 ? 'warning' : 'success'} />
+              <StatCard label="예상 순수익" value={`${realNetProfit.toLocaleString()}원`} helper={manualIncome > 0 ? `수동 +${manualIncome.toLocaleString()}원 포함` : '풀파티 기준'} tone={realNetProfit >= 0 ? 'success' : 'danger'} />
+              <StatCard label="채움률" value={`${totalMaxSlots > 0 ? Math.round(totalUsing / totalMaxSlots * 100) : 0}%`} helper="서비스 전체 기준" tone={totalVacancy > 0 ? 'warning' : 'success'} />
+            </div>
+          </section>
+
+          <Card tone={sellerStatus?.warnings?.length || safeMode?.enabled ? 'warning' : 'success'} style={{ marginBottom: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
+              <div style={{ fontSize: 14, fontWeight: 900, color: 'var(--foreground)' }}>위험 알림</div>
+              <StatusBadge tone={sellerStatus?.warnings?.length || safeMode?.enabled ? 'warning' : 'success'}>
+                {sellerStatus?.warnings?.length || safeMode?.enabled ? '조치 필요' : '이상 없음'}
+              </StatusBadge>
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.55 }}>
+              {safeMode?.enabled
+                ? `안전 모드 ON · ${safeMode.reason || '위험 작업이 잠겨 있어요'}`
+                : sellerStatus?.warnings?.length
+                  ? sellerStatus.warnings.slice(0, 3).join(' · ')
+                  : '세션, 자동화, 파티 채움 상태에 큰 이상이 없어요.'}
+            </div>
+          </Card>
+
+          <section style={{ marginBottom: 18 }}>
+            <h2 style={{ fontSize: 15, fontWeight: 900, color: 'var(--foreground)', margin: '0 0 10px' }}>바로가기</h2>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              {[
+                { path: '/price', title: '가격', desc: '시세 확인', emoji: '📊' },
+                { path: '/profit', title: '수익', desc: '정산 보기', emoji: '💰' },
+                { path: '/write', title: '글 작성', desc: '모집/게시', emoji: '✍️' },
+                { path: '/manage', title: '관리', desc: '계정 운영', emoji: '🧩' },
+              ].map(item => (
+                <button key={item.path} onClick={() => navigate(item.path)} style={{ background: 'var(--surface-raised)', border: '1.5px solid var(--border)', borderRadius: 16, padding: '12px 13px', display: 'flex', alignItems: 'center', gap: 10, textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit', boxShadow: 'var(--shadow-card)' }}>
+                  <span style={{ fontSize: 22 }}>{item.emoji}</span>
+                  <span style={{ minWidth: 0 }}>
+                    <span style={{ display: 'block', fontSize: 13, fontWeight: 900, color: 'var(--foreground)' }}>{item.title}</span>
+                    <span style={{ display: 'block', fontSize: 11, color: 'var(--text-subtle)', marginTop: 2 }}>{item.desc}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </section>
+
           {/* 배너 */}
           <div style={{
             background: realNetProfit >= 0

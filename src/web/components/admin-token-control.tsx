@@ -10,7 +10,7 @@ import {
 export default function AdminTokenControl() {
   const [token, setToken] = useState("");
   const [hasToken, setHasToken] = useState(false);
-  const [message, setMessage] = useState("관리자 보호 기능 사용 시 토큰을 저장하세요.");
+  const [message, setMessage] = useState("잠김 · 관리자 보호 기능 사용 시 토큰을 저장하세요.");
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -20,7 +20,7 @@ export default function AdminTokenControl() {
 
     const onAuthFailure = (event: Event) => {
       const detail = (event as CustomEvent<AdminAuthFailureDetail>).detail;
-      setMessage(detail?.message || "AIO 관리자 토큰 확인이 필요합니다.");
+      setMessage(detail?.message ? `오류 · ${detail.message}` : "오류 · AIO 관리자 토큰 확인이 필요합니다.");
       setOpen(true);
     };
 
@@ -33,7 +33,7 @@ export default function AdminTokenControl() {
     const saved = Boolean(getAdminToken());
     setHasToken(saved);
     setToken("");
-    setMessage(saved ? "관리자 토큰이 이 브라우저에 저장되었습니다." : "토큰을 입력하세요.");
+    setMessage(saved ? "인증됨 · 관리자 토큰이 이 브라우저에 저장되었습니다." : "잠김 · 토큰을 입력하세요.");
     if (saved) setOpen(false);
   };
 
@@ -41,7 +41,7 @@ export default function AdminTokenControl() {
     clearAdminToken();
     setHasToken(false);
     setToken("");
-    setMessage("저장된 관리자 토큰을 삭제했습니다.");
+    setMessage("잠김 · 저장된 관리자 토큰을 삭제했습니다.");
     setOpen(true);
   };
 
@@ -71,7 +71,7 @@ export default function AdminTokenControl() {
           }}
           title="AIO 관리자 토큰은 서버/HTML에 노출되지 않고 현재 브라우저 localStorage에만 저장됩니다."
         >
-          {hasToken ? "관리자 토큰 저장됨" : "관리자 토큰 필요"}
+          {hasToken ? "인증됨 · 관리자" : "잠김 · 토큰 필요"}
         </button>
       ) : (
         <div

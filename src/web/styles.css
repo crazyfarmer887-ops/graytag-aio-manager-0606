@@ -49,6 +49,19 @@
   --border: #E9E4FF;
   --input: #EDE9FE;
   --ring: #A78BFA;
+  --success: #059669;
+  --success-bg: #ECFDF5;
+  --warning: #D97706;
+  --warning-bg: #FFFBEB;
+  --danger: #DC2626;
+  --danger-bg: #FEF2F2;
+  --info: #2563EB;
+  --info-bg: #EFF6FF;
+  --surface: #F8F6FF;
+  --surface-raised: #FFFFFF;
+  --text-muted: #6B7280;
+  --text-subtle: #9CA3AF;
+  --shadow-card: 0 2px 14px rgba(30,27,75,0.08);
 }
 
 * {

@@ -2,17 +2,25 @@ import { useState, useRef, useEffect } from "react";
 import { useLocation } from "wouter";
 import { Home, BarChart2, PenLine, LayoutGrid, User, Calculator, MessageCircle, Settings2, Info, Menu, X } from "lucide-react";
 
-const tabs = [
-  { path: "/",           label: "홈",      Icon: Home },
-  { path: "/price",      label: "가격",    Icon: BarChart2 },
-  { path: "/profit",     label: "수익",    Icon: Calculator },
-  { path: "/write",      label: "글 작성", Icon: PenLine },
-  { path: "/chat",       label: "채팅",    Icon: MessageCircle },
-  { path: "/edit-price", label: "게시물",  Icon: Settings2 },
-  { path: "/party-info", label: "파티정보", Icon: Info },
-  { path: "/manage",     label: "관리",    Icon: LayoutGrid },
-  { path: "/my",         label: "내계정",  Icon: User },
+const navGroups = [
+  { label: "홈", items: [{ path: "/", label: "홈", Icon: Home }] },
+  { label: "운영", items: [
+    { path: "/manage",     label: "관리",    Icon: LayoutGrid },
+    { path: "/party-info", label: "파티정보", Icon: Info },
+    { path: "/edit-price", label: "게시물",  Icon: Settings2 },
+  ] },
+  { label: "수익", items: [
+    { path: "/profit",     label: "수익",    Icon: Calculator },
+    { path: "/price",      label: "가격",    Icon: BarChart2 },
+  ] },
+  { label: "자동화", items: [
+    { path: "/write",      label: "글 작성", Icon: PenLine },
+    { path: "/chat",       label: "채팅",    Icon: MessageCircle },
+  ] },
+  { label: "설정", items: [{ path: "/my", label: "내계정", Icon: User }] },
 ];
+
+const tabs = navGroups.flatMap(group => group.items);
 
 export default function BottomNav() {
   const [location, navigate] = useLocation();
@@ -104,11 +112,14 @@ export default function BottomNav() {
 
         {/* 메뉴 목록 */}
         <div style={{ padding: '8px 10px', flex: 1 }}>
-          {tabs.map(({ path, label, Icon }) => {
-            const active = isActive(path);
-            const isWrite = path === '/write';
-            return (
-              <button key={path} onClick={() => { navigate(path); setOpen(false); }} style={{
+          {navGroups.map(group => (
+            <div key={group.label} style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 11, fontWeight: 900, color: '#A78BFA', padding: '8px 10px 5px', letterSpacing: '0.04em' }}>{group.label}</div>
+              {group.items.map(({ path, label, Icon }) => {
+                const active = isActive(path);
+                const isWrite = path === '/write';
+                return (
+                  <button key={path} onClick={() => { navigate(path); setOpen(false); }} style={{
                 display: 'flex', alignItems: 'center', gap: 12,
                 width: '100%', padding: '11px 14px', marginBottom: 2,
                 background: active ? '#F3F0FF' : 'transparent',
@@ -148,9 +159,11 @@ export default function BottomNav() {
                     background: '#A78BFA',
                   }} />
                 )}
-              </button>
-            );
-          })}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
         </div>
       </div>
     </>
