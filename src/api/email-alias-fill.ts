@@ -89,9 +89,7 @@ export async function updateEmailAliasPin(input: {
     return { ok: false, found: false, email: accountEmail, serviceType, emailId: null, pin: null, memo: '', missing: ['pin'], message: 'PIN은 6자리 숫자여야 해요.' };
   }
   const pinStore = loadAliasPinStore();
-  const alias = chooseAlias(accountEmail, serviceType, input.aliases, pinStore)
-    || input.aliases.find(a => a && a.id !== undefined && a.email && a.enabled !== false)
-    || null;
+  const alias = chooseAlias(accountEmail, serviceType, input.aliases, pinStore);
   if (!alias) {
     return { ok: false, found: false, email: accountEmail, serviceType, emailId: null, pin: null, memo: '', missing: ['email'], message: '이 계정과 연결된 이메일 대시보드 alias를 찾지 못했어요.' };
   }
