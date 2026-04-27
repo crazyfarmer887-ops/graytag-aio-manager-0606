@@ -42,7 +42,7 @@ function timeValue(value?: string): number {
 
 export function buildChatAlerts(rooms: ChatAlertRoom[] = [], limit = 5): ChatAlertItem[] {
   return rooms
-    .map((room) => {
+    .map((room): ChatAlertItem | null => {
       const message = stripChatMessage(room.lastMessage || '');
       if (!message) return null;
       const buyerName = room.borrowerName?.trim() || '구매자';
@@ -59,9 +59,13 @@ export function buildChatAlerts(rooms: ChatAlertRoom[] = [], limit = 5): ChatAle
         unread: Boolean(room.lenderChatUnread),
         lastMessageTime: room.lastMessageTime,
         title: `${buyerName} · ${serviceType}`,
-      } satisfies ChatAlertItem;
+      };
     })
     .filter((item): item is ChatAlertItem => Boolean(item))
     .sort((a, b) => Number(b.unread) - Number(a.unread) || timeValue(b.lastMessageTime) - timeValue(a.lastMessageTime))
     .slice(0, limit);
+}
+
+export function buildUnreadChatAlerts(rooms: ChatAlertRoom[] = [], limit = 5): ChatAlertItem[] {
+  return buildChatAlerts(rooms.filter((room) => Boolean(room.lenderChatUnread)), limit);
 }

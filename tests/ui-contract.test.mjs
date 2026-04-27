@@ -33,6 +33,8 @@ test('OTT home and navigation use the refreshed UI structure', () => {
   assert.match(home, /바로가기/);
   assert.match(home, /만료된 파티 현황/);
   assert.match(home, /실시간 채팅 알림/);
+  assert.match(home, /안 읽은 문의 내용/);
+  assert.match(home, /buildUnreadChatAlerts\(json\.rooms \|\| \[\], 5\)/);
   assert.match(home, /buildChatAlerts\(json\.rooms \|\| \[\], 5\)/);
   assert.match(home, /fetch\('\/api\/chat\/rooms'\)/);
   assert.match(home, /buildServiceStats\(data, manuals\)/);

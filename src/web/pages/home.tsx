@@ -4,7 +4,7 @@ import { MonthlyCalendarWidget } from "./profit";
 import { useLocation } from "wouter";
 import { CATEGORIES } from "../lib/constants";
 import { buildExpiredPartyItems, buildServiceStats, type ExpiredPartyItem } from "../lib/dashboard-stats";
-import { buildChatAlerts, type ChatAlertItem, type ChatAlertRoom } from "../lib/chat-alerts";
+import { buildChatAlerts, buildUnreadChatAlerts, type ChatAlertItem, type ChatAlertRoom } from "../lib/chat-alerts";
 import { RefreshCw, ChevronRight, User, Loader2, TrendingUp, TrendingDown, Wallet, CheckCircle2, RotateCcw, Settings, Zap, ShieldAlert, Bell, MessageCircle } from "lucide-react";
 import { Card, StatCard } from "../components/ui/card";
 import { StatusBadge } from "../components/ui/status-badge";
@@ -591,7 +591,7 @@ function ExpiredPartyPanel({ items }: { items: ExpiredPartyItem[] }) {
   );
 }
 
-function ChatAlertsPanel({ alerts, unreadCount, loading, updatedAt, error, onOpenChat }: { alerts: ChatAlertItem[]; unreadCount: number; loading: boolean; updatedAt: string | null; error: string | null; onOpenChat: () => void }) {
+function ChatAlertsPanel({ alerts, unreadAlerts, unreadCount, loading, updatedAt, error, onOpenChat }: { alerts: ChatAlertItem[]; unreadAlerts: ChatAlertItem[]; unreadCount: number; loading: boolean; updatedAt: string | null; error: string | null; onOpenChat: () => void }) {
   return (
     <Card tone={unreadCount > 0 ? 'warning' : 'info'} style={{ marginBottom: 16 }}>
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, marginBottom:10 }}>
@@ -617,6 +617,19 @@ function ChatAlertsPanel({ alerts, unreadCount, loading, updatedAt, error, onOpe
         </div>
       </div>
       {error && <div style={{ background:'#FFF0F0', color:'#EF4444', borderRadius:10, padding:'8px 10px', fontSize:11, marginBottom:8 }}>{error}</div>}
+      {unreadAlerts.length > 0 && (
+        <div style={{ background:'#FFFBEB', border:'1px solid #FDE68A', borderRadius:14, padding:'10px 11px', marginBottom:10 }}>
+          <div style={{ fontSize:12, fontWeight:900, color:'#92400E', marginBottom:8 }}>안 읽은 문의 내용</div>
+          <div style={{ display:'flex', flexDirection:'column', gap:7 }}>
+            {unreadAlerts.map(alert => (
+              <div key={`unread-${alert.id}`} style={{ background:'#fff', border:'1px solid #FEF3C7', borderRadius:11, padding:'8px 9px' }}>
+                <div style={{ fontSize:11, fontWeight:900, color:'#1E1B4B', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{alert.buyerName} · {alert.serviceType}</div>
+                <div style={{ fontSize:11, color:'#6B21A8', marginTop:5, lineHeight:1.35, wordBreak:'break-word' }}>“{alert.message}”</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {loading && alerts.length === 0 ? (
         <div style={{ color:'#9CA3AF', fontSize:12, padding:'10px 0' }}>채팅 알림 조회중...</div>
       ) : alerts.length === 0 ? (
@@ -649,6 +662,7 @@ export default function HomePage() {
   const [safeMode, setSafeMode] = useState<SafeModeState | null>(null);
   const [safeModeSaving, setSafeModeSaving] = useState(false);
   const [chatAlerts, setChatAlerts] = useState<ChatAlertItem[]>([]);
+  const [unreadChatAlerts, setUnreadChatAlerts] = useState<ChatAlertItem[]>([]);
   const [chatUnreadCount, setChatUnreadCount] = useState(0);
   const [chatUpdatedAt, setChatUpdatedAt] = useState<string | null>(null);
   const [chatLoading, setChatLoading] = useState(false);
@@ -681,8 +695,10 @@ export default function HomePage() {
       const json = await res.json() as { rooms?: ChatAlertRoom[]; unreadCount?: number; updatedAt?: string; error?: string };
       if (!res.ok) throw new Error(json.error || '채팅 알림 조회 실패');
       const alerts = buildChatAlerts(json.rooms || [], 5);
+      const unreadAlerts = buildUnreadChatAlerts(json.rooms || [], 5);
       setChatAlerts(alerts);
-      setChatUnreadCount(json.unreadCount ?? alerts.filter((item) => item.unread).length);
+      setUnreadChatAlerts(unreadAlerts);
+      setChatUnreadCount(json.unreadCount ?? unreadAlerts.length);
       setChatUpdatedAt(json.updatedAt ? formatShortTime(json.updatedAt) : formatShortTime(new Date().toISOString()));
     } catch (e: any) {
       setChatError(e.message || '채팅 알림 조회 실패');
@@ -917,6 +933,7 @@ export default function HomePage() {
 
           <ChatAlertsPanel
             alerts={chatAlerts}
+            unreadAlerts={unreadChatAlerts}
             unreadCount={chatUnreadCount}
             loading={chatLoading}
             updatedAt={chatUpdatedAt}

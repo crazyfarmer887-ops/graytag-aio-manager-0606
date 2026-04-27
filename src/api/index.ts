@@ -14,6 +14,7 @@ import { DEFAULT_MANAGEMENT_CACHE_TTL_MS, isAutoSessionManagementRequest, manage
 import { buildProfileAuditRows, profileAuditKey, runProfileCheckPlaceholder, summarizeProfileAudit, type ProfileAuditRow, type ProfileAuditStore } from '../lib/profile-audit';
 import { createProfileAuditProgress, finishProfileAuditProgress, loadProfileAuditStore, saveProfileAuditStore, updateProfileAuditProgress, type ProfileAuditProgress } from './profile-audit';
 import { checkNetflixProfiles, fetchNetflixEmailCodeViaEmailServer } from './netflix-profile-checker';
+import { extractGraytagChats, findLatestBuyerInquiryMessage } from './chat-message-summary';
 
 const EMAIL_SERVER = "http://127.0.0.1:3001";
 const app = new Hono();
@@ -1098,9 +1099,8 @@ app.get('/chat/rooms', async (c) => {
           );
           if (msgResp.ok) {
             const msgData = await safeJson(msgResp);
-            const messages = msgData.data?.data?.chats || [];
-            // 가장 최신 메시지 찾기 (isInfo가 아닌, 실제 유저 메시지)
-            const userMsg = messages.find((m: any) => !m.isInfo);
+            const messages = extractGraytagChats(msgData);
+            const userMsg = findLatestBuyerInquiryMessage(messages);
             if (userMsg) {
               room.lastMessage = userMsg.message
                 .replace(/<br\s*\/?>/gi, ' ')
