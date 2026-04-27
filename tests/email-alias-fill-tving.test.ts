@@ -22,8 +22,8 @@ describe('resolveEmailAliasFill tving aliases', () => {
       accountEmail: 'gtwalve4',
       serviceType: '티방',
       aliases: [
-        { id: 100, email: 'wavve-old@example.com', enabled: true },
-        { id: 90210, email: 'tving7.example@aleeas.com', enabled: true },
+        { id: 100, email: 'tving-old@example.com', enabled: true },
+        { id: 90210, email: 'wavve7.example@aleeas.com', enabled: true },
       ],
     });
 

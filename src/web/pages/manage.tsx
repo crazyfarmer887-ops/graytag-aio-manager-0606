@@ -413,10 +413,10 @@ export default function ManagePage() {
 
   // 서비스 타입으로 alias 찾기 (이메일 주소가 다르므로)
   const getAliasForService = (serviceType: string) => {
-    // 서비스 타입에서 keyword 추출. Graytag 티빙 계정은 종종 "티방"/gtwavve/gtwalve로 보인다.
+    // 서비스 타입에서 keyword 추출. 티빙은 웨이브+티빙 번들 alias(wavve*)로 전달한다.
     const normalized = serviceType.toLowerCase();
     const keywords = /티빙|티방|tving|gtwavve|gtwalve/.test(normalized)
-      ? ['tving']
+      ? ['tving', 'wavve']
       : [normalized];
     // slAliases에서 해당 서비스 이메일 찾기 (이메일에 서비스명 포함된 것)
     let serviceAliases = slAliases.filter(a =>
