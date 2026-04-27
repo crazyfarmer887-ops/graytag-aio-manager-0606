@@ -12,6 +12,7 @@ const ADMIN_REQUIRED_GET_PREFIXES = [
   "/api/safe-mode",
   "/api/email-alias-fill",
   "/api/profile-audit",
+  "/api/party-maintenance-checklists",
 ];
 
 export type AdminAuthFailureDetail = {

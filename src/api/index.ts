@@ -16,6 +16,7 @@ import { buildProfileAuditRows, profileAuditKey, runProfileCheckPlaceholder, sum
 import { createProfileAuditProgress, finishProfileAuditProgress, loadProfileAuditStore, saveProfileAuditStore, updateProfileAuditProgress, type ProfileAuditProgress } from './profile-audit';
 import { checkNetflixProfiles, fetchNetflixEmailCodeViaEmailServer } from './netflix-profile-checker';
 import { extractGraytagChats, findLatestBuyerInquiryMessage } from './chat-message-summary';
+import { mergePartyMaintenanceChecklistState, type PartyMaintenanceChecklistStore } from '../lib/party-maintenance-checklist';
 
 const EMAIL_SERVER = "http://127.0.0.1:3001";
 const app = new Hono();
@@ -34,6 +35,7 @@ const ADMIN_REQUIRED_GET_PREFIXES = [
   '/safe-mode',
   '/email-alias-fill',
   '/profile-audit',
+  '/party-maintenance-checklists',
 ];
 
 function normalizedApiPath(path: string): string {
@@ -2649,6 +2651,7 @@ app.post('/chat/mark-read', async (c) => {
 
 const PARTY_FEEDBACK_PATH = '/home/ubuntu/.hermes/hermes-agent/graytag-aio-manager-0606/data/party-feedback.json';
 const FEEDBACK_SETTINGS_PATH = '/home/ubuntu/.hermes/hermes-agent/graytag-aio-manager-0606/data/feedback-settings.json';
+const PARTY_MAINTENANCE_CHECKLIST_PATH = '/home/ubuntu/.hermes/hermes-agent/graytag-aio-manager-0606/data/party-maintenance-checklists.json';
 
 interface FeedbackItem {
   id: string;
@@ -2690,6 +2693,20 @@ function saveFeedbackSettings(s: FeedbackSettings) {
   const dir = FEEDBACK_SETTINGS_PATH.replace(/\/[^\/]+$/, '');
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   writeFileSync(FEEDBACK_SETTINGS_PATH, JSON.stringify(s, null, 2), 'utf8');
+}
+
+function loadPartyMaintenanceChecklistStore(): PartyMaintenanceChecklistStore {
+  try {
+    if (!existsSync(PARTY_MAINTENANCE_CHECKLIST_PATH)) return {};
+    const raw = JSON.parse(readFileSync(PARTY_MAINTENANCE_CHECKLIST_PATH, 'utf8'));
+    return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  } catch { return {}; }
+}
+
+function savePartyMaintenanceChecklistStore(store: PartyMaintenanceChecklistStore) {
+  const dir = PARTY_MAINTENANCE_CHECKLIST_PATH.replace(/\/[^\/]+$/, '');
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  writeFileSync(PARTY_MAINTENANCE_CHECKLIST_PATH, JSON.stringify(store, null, 2), 'utf8');
 }
 
 const FB_PARTY_MAX: Record<string, number> = {
@@ -2887,6 +2904,20 @@ function generateFeedbackFromData(manageData: any, settings: FeedbackSettings): 
 // GET: 피드백 목록
 app.get('/party-feedback', (c) => {
   return c.json({ items: loadFeedbackItems() });
+});
+
+app.get('/party-maintenance-checklists', (c) => {
+  const store = loadPartyMaintenanceChecklistStore();
+  return c.json({ ok: true, store, keys: Object.keys(store).length, updatedAt: new Date().toISOString() });
+});
+
+app.post('/party-maintenance-checklists/:key', async (c) => {
+  const { key } = c.req.param();
+  if (!key) return c.json({ ok: false, error: 'key required' }, 400);
+  const body = await c.req.json() as any;
+  const store = mergePartyMaintenanceChecklistState(loadPartyMaintenanceChecklistStore(), key, body || {}, 'dashboard');
+  savePartyMaintenanceChecklistStore(store);
+  return c.json({ ok: true, item: store[key], store });
 });
 
 // POST: 피드백 재생성

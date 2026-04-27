@@ -5,6 +5,7 @@ import { useLocation } from "wouter";
 import { CATEGORIES } from "../lib/constants";
 import { buildPartyMaintenanceTargets, buildServiceStats, type PartyMaintenanceTarget } from "../lib/dashboard-stats";
 import { buildChatAlerts, buildUnreadChatAlerts, type ChatAlertItem, type ChatAlertRoom } from "../lib/chat-alerts";
+import { buildPartyMaintenanceChecklistItems, mergePartyMaintenanceChecklistState, type PartyMaintenanceChecklistItem, type PartyMaintenanceChecklistState, type PartyMaintenanceChecklistStore } from "../../lib/party-maintenance-checklist";
 import { RefreshCw, ChevronRight, User, Loader2, TrendingUp, TrendingDown, Wallet, CheckCircle2, RotateCcw, Settings, Zap, ShieldAlert, Bell, MessageCircle } from "lucide-react";
 import { Card, StatCard } from "../components/ui/card";
 import { StatusBadge } from "../components/ui/status-badge";
@@ -543,10 +544,33 @@ function PartyFeedbackPanel({ manageData }: { manageData: ManageData }) {
   );
 }
 
-function PartyMaintenancePanel({ items, onGoManage, onGoWrite }: { items: PartyMaintenanceTarget[]; onGoManage: () => void; onGoWrite: () => void }) {
+function ChoiceButton({ label, active, onClick, tone = 'purple' }: { label: string; active: boolean; onClick: () => void; tone?: 'purple' | 'green' | 'red' }) {
+  const activeBg = tone === 'green' ? '#DCFCE7' : tone === 'red' ? '#FEE2E2' : '#EDE9FE';
+  const activeColor = tone === 'green' ? '#047857' : tone === 'red' ? '#DC2626' : '#7C3AED';
+  return (
+    <button onClick={onClick} style={{ border: 'none', borderRadius: 8, padding: '5px 9px', background: active ? activeBg : '#F3F4F6', color: active ? activeColor : '#9CA3AF', fontSize: 10, fontWeight: 900, cursor: 'pointer', fontFamily: 'inherit' }}>
+      {label}
+    </button>
+  );
+}
+
+function ChecklistRow({ label, value, onChange }: { label: string; value: boolean | null; onChange: (value: boolean) => void }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, background: '#F9FAFB', borderRadius: 9, padding: '6px 7px' }}>
+      <span style={{ fontSize: 10, color: '#4B5563', fontWeight: 800 }}>{label}</span>
+      <span style={{ display: 'flex', gap: 4 }}>
+        <ChoiceButton label="Y" active={value === true} onClick={() => onChange(true)} tone="green" />
+        <ChoiceButton label="N" active={value === false} onClick={() => onChange(false)} tone="red" />
+      </span>
+    </div>
+  );
+}
+
+function PartyMaintenancePanel({ items, onUpdate, onGoManage, onGoWrite }: { items: PartyMaintenanceChecklistItem<PartyMaintenanceTarget>[]; onUpdate: (key: string, patch: Partial<PartyMaintenanceChecklistState>) => void; onGoManage: () => void; onGoWrite: () => void }) {
   if (items.length === 0) return null;
-  const noCurrentUsers = items.filter((item) => item.reason === 'no-current-users').length;
-  const expiringSoon = items.filter((item) => item.reason === 'expiring-soon').length;
+  const noCurrentUsers = items.filter((item) => item.target.reason === 'no-current-users').length;
+  const expiringSoon = items.filter((item) => item.target.reason === 'expiring-soon').length;
+  const completed = items.filter((item) => item.progress.done >= item.progress.total).length;
   const shortDate = (value: string) => value ? value.replace(/-/g, '/').slice(2) : '날짜 없음';
 
   return (
@@ -554,9 +578,9 @@ function PartyMaintenancePanel({ items, onGoManage, onGoWrite }: { items: PartyM
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
         <div>
           <div style={{ fontSize: 14, fontWeight: 900, color: 'var(--foreground)' }}>파티 재정비 대상</div>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>예전에 열었지만 이용중 0명이거나 7일 이내 만료되는 계정</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>이용중 0명/7일 이내 만료 계정의 재모집·정리 Y/N 체크</div>
         </div>
-        <StatusBadge tone="warning">{items.length}건</StatusBadge>
+        <StatusBadge tone="warning">{completed}/{items.length} 완료</StatusBadge>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
         <div style={{ background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 12, padding: '9px 10px' }}>
@@ -569,35 +593,62 @@ function PartyMaintenancePanel({ items, onGoManage, onGoWrite }: { items: PartyM
         </div>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {items.slice(0, 8).map((item) => (
-          <div key={item.key} style={{ background: '#fff', border: '1px solid #F3F4F6', borderRadius: 12, padding: '10px 11px' }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 12, fontWeight: 900, color: '#1E1B4B' }}>{item.serviceType}</span>
-                  <span style={{ fontSize: 10, fontWeight: 800, color: item.reason === 'no-current-users' ? '#C2410C' : '#92400E', background: item.reason === 'no-current-users' ? '#FFEDD5' : '#FEF3C7', borderRadius: 999, padding: '2px 7px' }}>{item.reasonLabel}</span>
+        {items.slice(0, 8).map((item) => {
+          const target = item.target;
+          return (
+            <div key={item.key} style={{ background: '#fff', border: '1px solid #F3F4F6', borderRadius: 12, padding: '10px 11px' }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 12, fontWeight: 900, color: '#1E1B4B' }}>{target.serviceType}</span>
+                    <span style={{ fontSize: 10, fontWeight: 800, color: target.reason === 'no-current-users' ? '#C2410C' : '#92400E', background: target.reason === 'no-current-users' ? '#FFEDD5' : '#FEF3C7', borderRadius: 999, padding: '2px 7px' }}>{target.reasonLabel}</span>
+                    <span style={{ fontSize: 10, fontWeight: 900, color: '#7C3AED', background: '#F5F3FF', borderRadius: 999, padding: '2px 7px' }}>{item.progress.done}/{item.progress.total}</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: '#6B7280', marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {target.accountEmail} · 최근 파티원 {target.lastMemberName}
+                  </div>
                 </div>
-                <div style={{ fontSize: 11, color: '#6B7280', marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {item.accountEmail} · 최근 파티원 {item.lastMemberName}
+                <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                  <div style={{ fontSize: 11, color: target.reason === 'expiring-soon' ? '#EF4444' : '#9A3412', fontWeight: 900 }}>
+                    {target.daysUntilExpiry !== null ? (target.daysUntilExpiry <= 0 ? '만료됨' : `D-${target.daysUntilExpiry}`) : '날짜 없음'}
+                  </div>
+                  <div style={{ fontSize: 10, color: '#9CA3AF', marginTop: 2 }}>{shortDate(target.expiryDate)}</div>
                 </div>
               </div>
-              <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                <div style={{ fontSize: 11, color: item.reason === 'expiring-soon' ? '#EF4444' : '#9A3412', fontWeight: 900 }}>
-                  {item.daysUntilExpiry !== null ? (item.daysUntilExpiry <= 0 ? '만료됨' : `D-${item.daysUntilExpiry}`) : '날짜 없음'}
+
+              <div style={{ marginTop: 9, background: '#FAFAFF', border: '1px solid #EDE9FE', borderRadius: 12, padding: '9px 10px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <div style={{ fontSize: 11, color: '#1E1B4B', fontWeight: 900 }}>해당 계정으로 또 다시 파티 모집을 진행할건가?</div>
+                  <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                    <ChoiceButton label="Y" active={item.recruitAgain === true} onClick={() => onUpdate(item.key, { recruitAgain: true })} tone="green" />
+                    <ChoiceButton label="N" active={item.recruitAgain === false} onClick={() => onUpdate(item.key, { recruitAgain: false })} tone="red" />
+                  </div>
                 </div>
-                <div style={{ fontSize: 10, color: '#9CA3AF', marginTop: 2 }}>{shortDate(item.expiryDate)}</div>
+                {item.recruitAgain === true && (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 6 }}>
+                    <ChecklistRow label="기존 파티원 프로필을 제거했는가" value={item.profileRemoved} onChange={(value) => onUpdate(item.key, { profileRemoved: value })} />
+                    <ChecklistRow label="모든 기기에서 로그아웃했는가" value={item.devicesLoggedOut} onChange={(value) => onUpdate(item.key, { devicesLoggedOut: value })} />
+                    <ChecklistRow label="비밀번호를 변경했는가" value={item.passwordChanged} onChange={(value) => onUpdate(item.key, { passwordChanged: value })} />
+                    <ChecklistRow label="PIN 번호를 변경했는가" value={item.pinChanged} onChange={(value) => onUpdate(item.key, { pinChanged: value })} />
+                  </div>
+                )}
+                {item.recruitAgain === false && (
+                  <ChecklistRow label="구독을 해지했는가" value={item.subscriptionCancelled} onChange={(value) => onUpdate(item.key, { subscriptionCancelled: value })} />
+                )}
+                <div style={{ fontSize: 10, color: '#9CA3AF', marginTop: 7 }}>다음 조치: {item.nextAction}</div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 7, marginTop: 9 }}>
+                <div style={{ background: '#F9FAFB', borderRadius: 9, padding: '6px 7px' }}>
+                  <div style={{ fontSize: 9, color: '#9CA3AF', fontWeight: 800 }}>이용중</div>
+                  <div style={{ fontSize: 12, color: '#111827', fontWeight: 900 }}>{target.usingCount}/{target.totalSlots}</div>
+                </div>
+                <button onClick={onGoManage} style={{ border: 'none', borderRadius: 9, padding: '6px 7px', background: '#EDE9FE', color: '#7C3AED', fontSize: 10, fontWeight: 900, cursor: 'pointer', fontFamily: 'inherit' }}>계정 관리</button>
+                <button onClick={onGoWrite} style={{ border: 'none', borderRadius: 9, padding: '6px 7px', background: '#DCFCE7', color: '#047857', fontSize: 10, fontWeight: 900, cursor: 'pointer', fontFamily: 'inherit' }}>모집 글</button>
               </div>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 7, marginTop: 9 }}>
-              <div style={{ background: '#F9FAFB', borderRadius: 9, padding: '6px 7px' }}>
-                <div style={{ fontSize: 9, color: '#9CA3AF', fontWeight: 800 }}>이용중</div>
-                <div style={{ fontSize: 12, color: '#111827', fontWeight: 900 }}>{item.usingCount}/{item.totalSlots}</div>
-              </div>
-              <button onClick={onGoManage} style={{ border: 'none', borderRadius: 9, padding: '6px 7px', background: '#EDE9FE', color: '#7C3AED', fontSize: 10, fontWeight: 900, cursor: 'pointer', fontFamily: 'inherit' }}>계정 관리</button>
-              <button onClick={onGoWrite} style={{ border: 'none', borderRadius: 9, padding: '6px 7px', background: '#DCFCE7', color: '#047857', fontSize: 10, fontWeight: 900, cursor: 'pointer', fontFamily: 'inherit' }}>모집 글</button>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </Card>
   );
@@ -679,6 +730,7 @@ export default function HomePage() {
   const [chatUpdatedAt, setChatUpdatedAt] = useState<string | null>(null);
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
+  const [partyMaintenanceChecklistStore, setPartyMaintenanceChecklistStore] = useState<PartyMaintenanceChecklistStore>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [, navigate] = useLocation();
@@ -697,6 +749,28 @@ export default function HomePage() {
       if (!res.ok) return;
       setSafeMode(await res.json() as SafeModeState);
     } catch { /* 안전 모드 배너는 보조 정보라 홈 조회를 막지 않음 */ }
+  };
+
+  const fetchPartyMaintenanceChecklists = async () => {
+    try {
+      const res = await fetch('/api/party-maintenance-checklists');
+      if (!res.ok) return;
+      const json = await res.json() as { store?: PartyMaintenanceChecklistStore };
+      setPartyMaintenanceChecklistStore(json.store || {});
+    } catch { /* 체크리스트는 보조 정보라 홈 조회를 막지 않음 */ }
+  };
+
+  const updatePartyMaintenanceChecklist = async (key: string, patch: Partial<PartyMaintenanceChecklistState>) => {
+    setPartyMaintenanceChecklistStore(prev => mergePartyMaintenanceChecklistState(prev, key, patch, 'dashboard'));
+    try {
+      const res = await fetch(`/api/party-maintenance-checklists/${encodeURIComponent(key)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      const json = await res.json() as { ok?: boolean; store?: PartyMaintenanceChecklistStore };
+      if (res.ok && json.store) setPartyMaintenanceChecklistStore(json.store);
+    } catch { await fetchPartyMaintenanceChecklists(); }
   };
 
   const fetchChatAlerts = async (silent = false) => {
@@ -769,13 +843,14 @@ export default function HomePage() {
   };
 
   useEffect(() => {
-    fetchData(); fetchSellerStatus(); fetchSafeMode(); fetchChatAlerts();
+    fetchData(); fetchSellerStatus(); fetchSafeMode(); fetchChatAlerts(); fetchPartyMaintenanceChecklists();
     const timer = window.setInterval(() => fetchChatAlerts(true), 15000);
     return () => window.clearInterval(timer);
   }, []);
 
   const stats = data ? buildServiceStats(data, manuals) : [];
   const partyMaintenanceTargets = data ? buildPartyMaintenanceTargets(data) : [];
+  const partyMaintenanceChecklistItems = buildPartyMaintenanceChecklistItems(partyMaintenanceTargets, partyMaintenanceChecklistStore);
   const totalUsing = stats.reduce((s, st) => s + st.usingMembers, 0);
   const totalMaxSlots = stats.reduce((s, st) => s + st.maxSlots, 0);
   const totalAccounts = stats.reduce((s, st) => s + st.accountCount, 0);
@@ -830,7 +905,7 @@ export default function HomePage() {
             <p style={{ fontSize: 12, color: '#9CA3AF', margin: '4px 0 0' }}>{formatTime(data.updatedAt)}{"최신화"}</p>
           )}
         </div>
-        <button onClick={() => { fetchData(); fetchSellerStatus(); fetchSafeMode(); fetchChatAlerts(); }} disabled={loading}
+        <button onClick={() => { fetchData(); fetchSellerStatus(); fetchSafeMode(); fetchChatAlerts(); fetchPartyMaintenanceChecklists(); }} disabled={loading}
           style={{ background: '#EDE9FE', border: 'none', borderRadius: 12, padding: '8px 12px', cursor: loading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#7C3AED', fontWeight: 600, fontFamily: 'inherit', opacity: loading ? 0.7 : 1 }}>
           {loading ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <RefreshCw size={14} strokeWidth={2.5} />}
           {loading ? '조회중' : '새로고침'}
@@ -1032,7 +1107,8 @@ export default function HomePage() {
           </div>
 
           <PartyMaintenancePanel
-            items={partyMaintenanceTargets}
+            items={partyMaintenanceChecklistItems}
+            onUpdate={updatePartyMaintenanceChecklist}
             onGoManage={() => navigate('/manage')}
             onGoWrite={() => navigate('/write')}
           />
