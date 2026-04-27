@@ -83,6 +83,21 @@ export interface ExpiredPartyItem {
   source: 'graytag' | 'manual';
 }
 
+export interface PartyMaintenanceTarget {
+  key: string;
+  serviceType: string;
+  accountEmail: string;
+  reason: 'no-current-users' | 'expiring-soon';
+  reasonLabel: string;
+  usingCount: number;
+  activeCount: number;
+  totalSlots: number;
+  expiryDate: string;
+  daysUntilExpiry: number | null;
+  lastMemberName: string;
+  memberCount: number;
+}
+
 const PARTY_MAX: Record<string, number> = {
   '디즈니플러스': 6,
   '왓챠플레이': 4,
@@ -150,6 +165,59 @@ function normalizeDate(value: string | null | undefined): string {
   const iso = value.match(/(\d{4})[-./\s]+(\d{1,2})[-./\s]+(\d{1,2})/);
   if (iso) return `${iso[1]}-${iso[2].padStart(2, '0')}-${iso[3].padStart(2, '0')}`;
   return value;
+}
+
+export function buildPartyMaintenanceTargets(
+  data: DashboardData,
+  options: { today?: string; expiringWithinDays?: number; limit?: number } = {},
+): PartyMaintenanceTarget[] {
+  const today = options.today || new Date().toISOString().slice(0, 10);
+  const todayMs = Date.parse(`${today}T00:00:00Z`);
+  const withinDays = options.expiringWithinDays ?? 7;
+  const limit = options.limit ?? 8;
+  const items: PartyMaintenanceTarget[] = [];
+
+  for (const svc of data.services) {
+    if (EXCLUDED_SERVICES.has(svc.serviceType)) continue;
+    for (const acct of svc.accounts) {
+      if (acct.email === '(직접전달)') continue;
+      const expiryDate = normalizeDate(acct.expiryDate);
+      const expiryMs = expiryDate ? Date.parse(`${expiryDate}T00:00:00Z`) : NaN;
+      const daysUntilExpiry = Number.isFinite(expiryMs) && Number.isFinite(todayMs)
+        ? Math.ceil((expiryMs - todayMs) / 86400000)
+        : null;
+      const hasOpenedPartyBefore = (acct.members || []).some((member) => !CANCELLED_STATUSES.has(member.status) && member.status !== 'Deleted');
+      const isNoCurrentUsers = hasOpenedPartyBefore && acct.usingCount === 0;
+      const isExpiringSoon = daysUntilExpiry !== null && daysUntilExpiry >= 0 && daysUntilExpiry <= withinDays && acct.usingCount > 0;
+      if (!isNoCurrentUsers && !isExpiringSoon) continue;
+
+      const sortedMembers = [...(acct.members || [])].sort((a, b) => normalizeDate(b.endDateTime).localeCompare(normalizeDate(a.endDateTime)));
+      const lastMember = sortedMembers.find((member) => !CANCELLED_STATUSES.has(member.status) && member.status !== 'Deleted');
+      items.push({
+        key: `${svc.serviceType}:${acct.email}`,
+        serviceType: svc.serviceType,
+        accountEmail: acct.email,
+        reason: isNoCurrentUsers ? 'no-current-users' : 'expiring-soon',
+        reasonLabel: isNoCurrentUsers ? '이용중 0명' : '7일 이내 만료',
+        usingCount: acct.usingCount,
+        activeCount: acct.activeCount,
+        totalSlots: acct.totalSlots || getDashboardPartyMax(acct.serviceType),
+        expiryDate,
+        daysUntilExpiry,
+        lastMemberName: lastMember?.name || '(미확인)',
+        memberCount: acct.members.length,
+      });
+    }
+  }
+
+  return items
+    .sort((a, b) => {
+      if (a.reason !== b.reason) return a.reason === 'expiring-soon' ? -1 : 1;
+      const aDays = a.daysUntilExpiry ?? 9999;
+      const bDays = b.daysUntilExpiry ?? 9999;
+      return aDays - bDays || a.serviceType.localeCompare(b.serviceType);
+    })
+    .slice(0, limit);
 }
 
 function isExpiredGraytagMember(member: DashboardMember): boolean {

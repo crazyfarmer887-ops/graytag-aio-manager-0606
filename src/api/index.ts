@@ -16,7 +16,6 @@ import { buildProfileAuditRows, profileAuditKey, runProfileCheckPlaceholder, sum
 import { createProfileAuditProgress, finishProfileAuditProgress, loadProfileAuditStore, saveProfileAuditStore, updateProfileAuditProgress, type ProfileAuditProgress } from './profile-audit';
 import { checkNetflixProfiles, fetchNetflixEmailCodeViaEmailServer } from './netflix-profile-checker';
 import { extractGraytagChats, findLatestBuyerInquiryMessage } from './chat-message-summary';
-import { mergeExpiredPartyChecklistState, type ExpiredPartyChecklistState, type ExpiredPartyChecklistStore } from '../lib/expired-party-checklist';
 
 const EMAIL_SERVER = "http://127.0.0.1:3001";
 const app = new Hono();
@@ -35,7 +34,6 @@ const ADMIN_REQUIRED_GET_PREFIXES = [
   '/safe-mode',
   '/email-alias-fill',
   '/profile-audit',
-  '/expired-party-checklists',
 ];
 
 function normalizedApiPath(path: string): string {
@@ -1311,51 +1309,6 @@ app.post('/my/delete-products', async (c) => {
 });
 
 app.get('/ping', (c) => c.json({ ok: true }));
-
-// ─── 만료 파티 체크리스트 상태 ────────────────────────────────
-const EXPIRED_PARTY_CHECKLIST_PATH = '/home/ubuntu/.hermes/hermes-agent/graytag-aio-manager-0606/data/expired-party-checklists.json';
-
-function loadExpiredPartyChecklistStore(): ExpiredPartyChecklistStore {
-  try {
-    if (!existsSync(EXPIRED_PARTY_CHECKLIST_PATH)) return {};
-    const parsed = JSON.parse(readFileSync(EXPIRED_PARTY_CHECKLIST_PATH, 'utf8'));
-    return parsed && typeof parsed === 'object' ? parsed as ExpiredPartyChecklistStore : {};
-  } catch { return {}; }
-}
-
-function saveExpiredPartyChecklistStore(store: ExpiredPartyChecklistStore) {
-  const dir = EXPIRED_PARTY_CHECKLIST_PATH.replace(/\/[^\/]+$/, '');
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  writeFileSync(EXPIRED_PARTY_CHECKLIST_PATH, JSON.stringify(store, null, 2), 'utf8');
-}
-
-const expiredPartyChecklistListHandler = (c: any) => {
-  const store = loadExpiredPartyChecklistStore();
-  return c.json({ ok: true, store, updatedAt: new Date().toISOString() });
-};
-app.get('/expired-party-checklists', expiredPartyChecklistListHandler);
-app.get('/api/expired-party-checklists', expiredPartyChecklistListHandler);
-
-const expiredPartyChecklistUpdateHandler = async (c: any) => {
-  const key = c.req.param('key');
-  if (!key) return c.json({ ok: false, error: 'key is required' }, 400);
-  const body = await c.req.json().catch(() => ({})) as Partial<ExpiredPartyChecklistState>;
-  const store = loadExpiredPartyChecklistStore();
-  const nextStore = mergeExpiredPartyChecklistState(store, key, body, 'dashboard');
-  saveExpiredPartyChecklistStore(nextStore);
-  writeAudit({
-    actor: 'admin',
-    action: 'expired-party-checklist.update',
-    targetType: 'expired-party',
-    targetId: key,
-    summary: 'expired party checklist updated',
-    result: 'success',
-    requestId: auditRequestId(c),
-  });
-  return c.json({ ok: true, item: nextStore[key], store: nextStore, updatedAt: new Date().toISOString() });
-};
-app.post('/expired-party-checklists/:key', expiredPartyChecklistUpdateHandler);
-app.post('/api/expired-party-checklists/:key', expiredPartyChecklistUpdateHandler);
 
 // ─── Seller 통합 상태판 (읽기 전용, 민감값 제외) ───────────────
 const KNOWN_DEALS_PATH = '/home/ubuntu/.hermes/hermes-agent/graytag-aio-manager-0606/data/known-deals.json';
