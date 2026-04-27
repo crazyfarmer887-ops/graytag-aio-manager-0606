@@ -31,6 +31,8 @@ test('OTT home and navigation use the refreshed UI structure', () => {
   assert.match(home, /오늘 상태/);
   assert.match(home, /위험 알림/);
   assert.match(home, /바로가기/);
+  assert.match(home, /만료된 파티 현황/);
+  assert.match(home, /buildServiceStats\(data, manuals\)/);
   assert.match(nav, /운영/);
   assert.match(nav, /자동화/);
   assert.match(admin, /인증됨|잠김|오류/);

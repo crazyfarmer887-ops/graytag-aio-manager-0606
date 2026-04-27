@@ -3,6 +3,7 @@ import ManagePage from "./manage";
 import { MonthlyCalendarWidget } from "./profit";
 import { useLocation } from "wouter";
 import { CATEGORIES } from "../lib/constants";
+import { buildExpiredPartyItems, buildServiceStats, type ExpiredPartyItem } from "../lib/dashboard-stats";
 import { RefreshCw, ChevronRight, User, Loader2, TrendingUp, TrendingDown, Wallet, CheckCircle2, RotateCcw, Settings, Zap, ShieldAlert } from "lucide-react";
 import { Card, StatCard } from "../components/ui/card";
 import { StatusBadge } from "../components/ui/status-badge";
@@ -196,74 +197,7 @@ function getActiveManualIncome(manuals: ManualMember[], serviceType: string, acc
     .reduce((s, m) => s + m.price, 0);
 }
 
-// ─── 서비스별 통계 (수동 파티원 포함) ───────────────────────────
-interface ServiceStat {
-  serviceType: string;
-  accountCount: number;
-  usingMembers: number;   // 그레이태그 + 수동 합산
-  maxSlots: number;
-  fillRatio: number;
-  monthlyNet: number;     // 수동 수익 포함
-}
-
-function buildServiceStats(data: ManageData, manuals: ManualMember[]): ServiceStat[] {
-  const svcMap: Record<string, { accounts: number; using: number; maxSlots: number; manualIncome: number }> = {};
-
-  for (const svc of data.services) {
-    const svcType = svc.serviceType;
-    if (EXCLUDED_SERVICES.includes(svcType)) continue;
-    if (!svcMap[svcType]) svcMap[svcType] = { accounts: 0, using: 0, maxSlots: 0, manualIncome: 0 };
-    for (const acct of svc.accounts) {
-      if (acct.usingCount === 0 && acct.activeCount === 0) continue;
-      const manualCount = getActiveManualCount(manuals, svcType, acct.email);
-      const manualIncome = getActiveManualIncome(manuals, svcType, acct.email);
-      svcMap[svcType].accounts++;
-      svcMap[svcType].using += acct.usingCount + manualCount;
-      // totalSlots: API가 netflixSeatCount 기반으로 계산한 실제 파티 크기 사용
-      svcMap[svcType].maxSlots += acct.totalSlots || getPartyMax(svcType);
-      svcMap[svcType].manualIncome += manualIncome;
-    }
-  }
-
-  // 수동 파티원이 있지만 그레이태그 계정이 없는 서비스도 포함 (accountEmail이 이메일 아닌 경우)
-  for (const m of manuals) {
-    if (EXCLUDED_SERVICES.includes(m.serviceType)) continue;
-    if (m.status === 'cancelled') continue;
-    const today = new Date().toISOString().split('T')[0];
-    if (m.startDate > today || m.endDate < today) continue;
-    // 이미 위에서 포함된 계정이면 스킵
-    const alreadyCounted = data.services
-      .find(s => s.serviceType === m.serviceType)
-      ?.accounts.some(a => a.email === m.accountEmail && (a.usingCount > 0 || a.activeCount > 0));
-    if (alreadyCounted) continue;
-    // 그레이태그에 없는 별도 계정 (예: gtwavve2 같은 별칭)
-    if (!svcMap[m.serviceType]) svcMap[m.serviceType] = { accounts: 0, using: 0, maxSlots: 0, manualIncome: 0 };
-    // 같은 계정 이미 추가됐는지 체크 (중복 방지)
-    const key = `${m.serviceType}::${m.accountEmail}`;
-    if (!(svcMap as any)[key]) {
-      (svcMap as any)[key] = true;
-      svcMap[m.serviceType].accounts++;
-      svcMap[m.serviceType].maxSlots += getPartyMax(m.serviceType);
-    }
-    svcMap[m.serviceType].using += 1;
-    svcMap[m.serviceType].manualIncome += m.price;
-  }
-
-  return Object.entries(svcMap)
-    .filter(([k, v]) => !k.includes('::') && v.accounts > 0)
-    .map(([svcType, v]) => {
-      const fillRatio = v.maxSlots > 0 ? v.using / v.maxSlots : 0;
-      return {
-        serviceType: svcType,
-        accountCount: v.accounts,
-        usingMembers: v.using,
-        maxSlots: v.maxSlots,
-        fillRatio,
-        monthlyNet: 0,
-      };
-    })
-    .sort((a, b) => b.usingMembers - a.usingMembers);
-}
+// ─── 서비스별 통계는 계정 관리 화면과 같은 기준으로 ../lib/dashboard-stats 에서 계산 ─────────
 
 const findCategory = (svcType: string) =>
   CATEGORIES.find(c => c.label === svcType || svcType.includes(c.label.slice(0, 2)));
@@ -608,6 +542,54 @@ function PartyFeedbackPanel({ manageData }: { manageData: ManageData }) {
   );
 }
 
+function ExpiredPartyPanel({ items }: { items: ExpiredPartyItem[] }) {
+  if (items.length === 0) return null;
+  const totalGraytag = items.filter((item) => item.source === 'graytag').length;
+  const totalManual = items.filter((item) => item.source === 'manual').length;
+  const shortDate = (value: string) => value ? value.replace(/-/g, '/').slice(2) : '날짜 없음';
+
+  return (
+    <Card tone="warning" style={{ marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 900, color: 'var(--foreground)' }}>만료된 파티 현황</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>최근 종료/만료된 파티를 한눈에 확인</div>
+        </div>
+        <StatusBadge tone="warning">{items.length}건</StatusBadge>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
+        <div style={{ background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 12, padding: '9px 10px' }}>
+          <div style={{ fontSize: 10, color: '#92400E', fontWeight: 800 }}>Graytag 종료</div>
+          <div style={{ fontSize: 18, color: '#78350F', fontWeight: 900, marginTop: 2 }}>{totalGraytag}건</div>
+        </div>
+        <div style={{ background: '#F3F4F6', border: '1px solid #E5E7EB', borderRadius: 12, padding: '9px 10px' }}>
+          <div style={{ fontSize: 10, color: '#4B5563', fontWeight: 800 }}>수동 만료</div>
+          <div style={{ fontSize: 18, color: '#111827', fontWeight: 900, marginTop: 2 }}>{totalManual}건</div>
+        </div>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {items.slice(0, 6).map((item) => (
+          <div key={`${item.source}-${item.dealUsid}`} style={{ background: '#fff', border: '1px solid #F3F4F6', borderRadius: 12, padding: '10px 11px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 12, fontWeight: 900, color: '#1E1B4B' }}>{item.serviceType}</span>
+                <span style={{ fontSize: 10, fontWeight: 800, color: item.source === 'manual' ? '#4B5563' : '#92400E', background: item.source === 'manual' ? '#F3F4F6' : '#FEF3C7', borderRadius: 999, padding: '2px 7px' }}>{item.statusName}</span>
+              </div>
+              <div style={{ fontSize: 11, color: '#6B7280', marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {item.memberName} · {item.accountEmail}
+              </div>
+            </div>
+            <div style={{ textAlign: 'right', flexShrink: 0 }}>
+              <div style={{ fontSize: 11, color: '#EF4444', fontWeight: 800 }}>{shortDate(item.endDate)}</div>
+              <div style={{ fontSize: 10, color: '#9CA3AF', marginTop: 2 }}>{item.price}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
 // ─── HomePage ────────────────────────────────────────────────────
 export default function HomePage() {
   const [data, setData] = useState<ManageData | null>(null);
@@ -687,6 +669,7 @@ export default function HomePage() {
   useEffect(() => { fetchData(); fetchSellerStatus(); fetchSafeMode(); }, []);
 
   const stats = data ? buildServiceStats(data, manuals) : [];
+  const expiredParties = data ? buildExpiredPartyItems(data, manuals) : [];
   const totalUsing = stats.reduce((s, st) => s + st.usingMembers, 0);
   const totalMaxSlots = stats.reduce((s, st) => s + st.maxSlots, 0);
   const totalAccounts = stats.reduce((s, st) => s + st.accountCount, 0);
@@ -931,6 +914,8 @@ export default function HomePage() {
               </div>
             </div>
           </div>
+
+          <ExpiredPartyPanel items={expiredParties} />
 
           {/* 서비스별 카드 */}
           <h2 style={{ fontSize: 15, fontWeight: 700, color: '#1E1B4B', margin: '0 0 12px' }}>{"서비스별 현황"}</h2>
