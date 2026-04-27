@@ -31,7 +31,11 @@ test('OTT home and navigation use the refreshed UI structure', () => {
   assert.match(home, /오늘 상태/);
   assert.match(home, /위험 알림/);
   assert.match(home, /바로가기/);
-  assert.match(home, /만료된 파티 현황/);
+  assert.match(home, /최근 만료 파티 체크리스트/);
+  assert.match(home, /해당 계정으로 또 다시 파티 모집을 진행할건가/);
+  assert.match(home, /기존 파티원 프로필을 제거했는가/);
+  assert.match(home, /구독을 해지했는가/);
+  assert.match(home, /expired-party-checklists/);
   assert.match(home, /실시간 채팅 알림/);
   assert.match(home, /안 읽은 문의 내용/);
   assert.match(home, /buildUnreadChatAlerts\(json\.rooms \|\| \[\], 5\)/);
