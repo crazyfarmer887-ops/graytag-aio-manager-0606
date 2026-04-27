@@ -13,9 +13,11 @@ const NETFLIX_PROFILE_SELECTORS = [
 const NETFLIX_CODE_INPUT_SELECTORS = [
   'input[name="code"]',
   'input[name="otp"]',
+  'input[name="verificationCode"]',
+  'input[name="twoFactorCode"]',
+  'input[autocomplete="one-time-code"]',
   'input[inputmode="numeric"]',
   'input[type="tel"]',
-  'input[type="text"]',
 ];
 
 export interface NetflixCheckInput {
@@ -110,12 +112,18 @@ export function profileAuditResultFromNetflixCount(actualProfileCount: number, e
 
 export async function fetchNetflixEmailCodeViaEmailServer(input: { email: string; requestedAfter: number; emailServer?: string }): Promise<string | null> {
   const emailServer = input.emailServer || process.env.EMAIL_SERVER || 'http://127.0.0.1:3001';
-  const url = new URL('/email/list', emailServer);
+  const url = new URL('/api/email/list', emailServer);
   url.searchParams.set('alias', input.email);
   url.searchParams.set('limit', '20');
   const res = await fetch(url);
-  if (!res.ok) return null;
+  const contentType = res.headers?.get?.('content-type') || '';
+  if (!contentType.includes('application/json')) {
+    throw new Error('Email Verify 응답이 JSON이 아니에요. 이메일 서버 라우트/인증 설정을 확인해야 해요.');
+  }
   const json = await res.json() as any;
+  if (!res.ok) {
+    throw new Error(`Email Verify 접근 실패: ${json?.error || `HTTP ${res.status}`}`);
+  }
   const emails = Array.isArray(json?.emails) ? json.emails : [];
   for (const mail of emails) {
     const ts = Number(mail.timestamp_sec || 0);

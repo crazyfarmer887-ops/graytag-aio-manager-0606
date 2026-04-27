@@ -54,6 +54,8 @@ describe('netflix profile checker', () => {
   test('fetches the newest Netflix email verification code from Email Verify server', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch' as any).mockResolvedValue({
       ok: true,
+      status: 200,
+      headers: new Headers({ 'content-type': 'application/json' }),
       json: async () => ({
         emails: [
           { subject: 'Other service', from_addr: 'noreply@example.com', timestamp_sec: 200, extractedAuth: { codes: ['111111'] } },
@@ -67,7 +69,41 @@ describe('netflix profile checker', () => {
       requestedAfter: 100,
       emailServer: 'http://127.0.0.1:3001',
     })).resolves.toBe('654321');
-    expect(String(fetchMock.mock.calls[0][0])).toContain('/email/list?alias=alias%40example.com&limit=20');
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/email/list?alias=alias%40example.com&limit=20');
+    fetchMock.mockRestore();
+  });
+
+  test('reports a clear Email Verify access error when the email server returns JSON 403', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch' as any).mockResolvedValue({
+      ok: false,
+      status: 403,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({ error: '이메일 접근 인증이 필요해요' }),
+      text: async () => '{"error":"이메일 접근 인증이 필요해요"}',
+    } as any);
+
+    await expect(fetchNetflixEmailCodeViaEmailServer({
+      email: 'alias@example.com',
+      requestedAfter: 100,
+      emailServer: 'http://127.0.0.1:3001',
+    })).rejects.toThrow('Email Verify 접근 실패: 이메일 접근 인증이 필요해요');
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/email/list?alias=alias%40example.com&limit=20');
+    fetchMock.mockRestore();
+  });
+
+  test('reports a clear Email Verify response error instead of leaking HTML JSON parse failures', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch' as any).mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-type': 'text/html' }),
+      text: async () => '<!doctype html>',
+    } as any);
+
+    await expect(fetchNetflixEmailCodeViaEmailServer({
+      email: 'alias@example.com',
+      requestedAfter: 100,
+      emailServer: 'http://127.0.0.1:3001',
+    })).rejects.toThrow('Email Verify 응답이 JSON이 아니에요');
     fetchMock.mockRestore();
   });
 
