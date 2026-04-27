@@ -35,7 +35,8 @@ function serviceKeywords(serviceType: string): string[] {
   const pairs: Array<[RegExp, string[]]> = [
     [/디즈니|disney/, ['disney']],
     [/넷플릭스|netflix/, ['netflix']],
-    [/티빙|tving/, ['tving']],
+    // Graytag sometimes labels TVING accounts as "티방" or legacy gtwa(l/v)ve account IDs.
+    [/티빙|티방|tving|gtwavve|gtwalve/, ['tving']],
     [/웨이브|wavve/, ['wavve']],
     [/왓챠|watcha/, ['watcha']],
     [/라프텔|laftel/, ['laftel']],

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { CATEGORIES } from "../lib/constants";
 import { buildAccountSlotStates, dedupeRecruitingProducts, mergeRecruitingProducts, type SlotState } from "../lib/account-slots";
+import { removeRecruitingProductFromManageData } from "../lib/manage-optimistic";
 import { assertAutoDeliveryInput, buildFillProductModel } from "../../lib/graytag-fill";
 import { buildProfileAuditRows, summarizeProfileAudit, type ProfileAuditRow, type ProfileAuditStore } from "../../lib/profile-audit";
 import { RefreshCw, KeyRound, Mail, ChevronDown, ChevronRight, TrendingUp, Loader2, AlertCircle, ExternalLink, Calendar, UserX, Megaphone, PlusCircle, X, UserPlus, Trash2, Activity, Wifi, WifiOff } from "lucide-react";
@@ -412,11 +413,14 @@ export default function ManagePage() {
 
   // 서비스 타입으로 alias 찾기 (이메일 주소가 다르므로)
   const getAliasForService = (serviceType: string) => {
-    // 서비스 타입에서 keyword 추출
-    const keyword = serviceType.toLowerCase();
+    // 서비스 타입에서 keyword 추출. Graytag 티빙 계정은 종종 "티방"/gtwavve/gtwalve로 보인다.
+    const normalized = serviceType.toLowerCase();
+    const keywords = /티빙|티방|tving|gtwavve|gtwalve/.test(normalized)
+      ? ['tving']
+      : [normalized];
     // slAliases에서 해당 서비스 이메일 찾기 (이메일에 서비스명 포함된 것)
     let serviceAliases = slAliases.filter(a =>
-      a.enabled && a.email.toLowerCase().includes(keyword) && a.pin
+      a.enabled && keywords.some(keyword => a.email.toLowerCase().includes(keyword)) && a.pin
     );
     // 가장 최근의 alias 반환 (id가 높을수록 최근)
     return serviceAliases.length > 0 ? serviceAliases.sort((a, b) => b.id - a.id)[0] : null;
@@ -1059,7 +1063,9 @@ https://email-verify.xyz/email/mail/${eid}
                                           const res = await fetch('/api/my/delete-products', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
                                           const json = await res.json() as any;
                                           if (json.successCount && json.successCount > 0) {
-                                            await doFetch();
+                                            setData(prev => prev ? removeRecruitingProductFromManageData(prev, acct.email, p.productUsid) as ManageData : prev);
+                                            // 서버 반영을 기다리지 않고 즉시 UI에서 제거하고, 백그라운드로 최신 상태를 맞춘다.
+                                            void doFetch();
                                           } else {
                                             const errMsg = json.results?.[0]?.error || json.error || '알 수 없는 오류';
                                             alert('삭제 실패:\n' + errMsg);
