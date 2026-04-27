@@ -566,7 +566,7 @@ function ChecklistRow({ label, value, onChange }: { label: string; value: boolea
   );
 }
 
-function PartyMaintenancePanel({ items, onUpdate, onGoManage, onGoWrite }: { items: PartyMaintenanceChecklistItem<PartyMaintenanceTarget>[]; onUpdate: (key: string, patch: Partial<PartyMaintenanceChecklistState>) => void; onGoManage: () => void; onGoWrite: () => void }) {
+function PartyMaintenancePanel({ items, regeneratingPinKey, onUpdate, onRegeneratePin, onGoManage, onGoWrite }: { items: PartyMaintenanceChecklistItem<PartyMaintenanceTarget>[]; regeneratingPinKey: string | null; onUpdate: (key: string, patch: Partial<PartyMaintenanceChecklistState>) => void; onRegeneratePin: (item: PartyMaintenanceChecklistItem<PartyMaintenanceTarget>) => void; onGoManage: () => void; onGoWrite: () => void }) {
   if (items.length === 0) return null;
   const noCurrentUsers = items.filter((item) => item.target.reason === 'no-current-users').length;
   const expiringSoon = items.filter((item) => item.target.reason === 'expiring-soon').length;
@@ -629,12 +629,15 @@ function PartyMaintenancePanel({ items, onUpdate, onGoManage, onGoWrite }: { ite
                     <ChecklistRow label="기존 구독이 유지됐는가" value={item.subscriptionKept} onChange={(value) => onUpdate(item.key, { subscriptionKept: value })} />
                     {item.subscriptionKept === true && (
                       <div style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 9, padding: '7px 8px' }}>
-                        <label style={{ display: 'block', fontSize: 10, color: '#047857', fontWeight: 900, marginBottom: 5 }}>구독 기간은 언제인가?</label>
+                        <label style={{ display: 'block', fontSize: 10, color: '#047857', fontWeight: 900, marginBottom: 5 }}>구독 결제일은 매달 몇일인가?</label>
                         <input
-                          type="text"
-                          value={item.subscriptionPeriod}
-                          placeholder="예: 2026-05-01 ~ 2026-05-31"
-                          onChange={(event) => onUpdate(item.key, { subscriptionPeriod: event.target.value })}
+                          type="number"
+                          inputMode="numeric"
+                          min={1}
+                          max={31}
+                          value={item.subscriptionBillingDay}
+                          placeholder="예: 15"
+                          onChange={(event) => onUpdate(item.key, { subscriptionBillingDay: event.target.value })}
                           style={{ width: '100%', boxSizing: 'border-box', border: '1px solid #A7F3D0', borderRadius: 8, padding: '7px 9px', fontSize: 11, color: '#065F46', fontWeight: 700, outline: 'none', fontFamily: 'inherit', background: '#fff' }}
                         />
                       </div>
@@ -642,7 +645,30 @@ function PartyMaintenancePanel({ items, onUpdate, onGoManage, onGoWrite }: { ite
                     <ChecklistRow label="기존 파티원 프로필을 제거했는가" value={item.profileRemoved} onChange={(value) => onUpdate(item.key, { profileRemoved: value })} />
                     <ChecklistRow label="모든 기기에서 로그아웃했는가" value={item.devicesLoggedOut} onChange={(value) => onUpdate(item.key, { devicesLoggedOut: value })} />
                     <ChecklistRow label="비밀번호를 변경했는가" value={item.passwordChanged} onChange={(value) => onUpdate(item.key, { passwordChanged: value })} />
-                    <ChecklistRow label="PIN 번호를 변경했는가" value={item.pinChanged} onChange={(value) => onUpdate(item.key, { pinChanged: value })} />
+                    {item.passwordChanged === true && (
+                      <div style={{ background: '#EEF2FF', border: '1px solid #C7D2FE', borderRadius: 9, padding: '7px 8px' }}>
+                        <label style={{ display: 'block', fontSize: 10, color: '#4338CA', fontWeight: 900, marginBottom: 5 }}>변경된 비밀번호</label>
+                        <input
+                          type="text"
+                          value={item.changedPassword}
+                          placeholder="변경한 비밀번호 입력"
+                          onChange={(event) => onUpdate(item.key, { changedPassword: event.target.value })}
+                          style={{ width: '100%', boxSizing: 'border-box', border: '1px solid #C7D2FE', borderRadius: 8, padding: '7px 9px', fontSize: 11, color: '#312E81', fontWeight: 700, outline: 'none', fontFamily: 'inherit', background: '#fff' }}
+                        />
+                      </div>
+                    )}
+                    <ChecklistRow label="PIN 번호를 아직 변경 안했는가" value={item.pinStillUnchanged} onChange={(value) => onUpdate(item.key, { pinStillUnchanged: value })} />
+                    {item.pinStillUnchanged === true && (
+                      <div style={{ background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 9, padding: '7px 8px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                          <span style={{ fontSize: 10, color: '#C2410C', fontWeight: 900 }}>Email Dashboard PIN</span>
+                          <button onClick={() => onRegeneratePin(item)} disabled={regeneratingPinKey === item.key} style={{ border: 'none', borderRadius: 8, padding: '6px 9px', background: '#F97316', color: '#fff', fontSize: 10, fontWeight: 900, cursor: regeneratingPinKey === item.key ? 'not-allowed' : 'pointer', fontFamily: 'inherit', opacity: regeneratingPinKey === item.key ? 0.65 : 1 }}>
+                            {regeneratingPinKey === item.key ? '생성중...' : '랜덤 6자리 PIN 재생성'}
+                          </button>
+                        </div>
+                        {item.generatedPin && <div style={{ fontSize: 11, color: '#9A3412', fontWeight: 900, marginTop: 6 }}>새 PIN: {item.generatedPin}</div>}
+                      </div>
+                    )}
                   </div>
                 )}
                 {item.recruitAgain === false && (
@@ -744,6 +770,7 @@ export default function HomePage() {
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [partyMaintenanceChecklistStore, setPartyMaintenanceChecklistStore] = useState<PartyMaintenanceChecklistStore>({});
+  const [regeneratingPinKey, setRegeneratingPinKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [, navigate] = useLocation();
@@ -784,6 +811,26 @@ export default function HomePage() {
       const json = await res.json() as { ok?: boolean; store?: PartyMaintenanceChecklistStore };
       if (res.ok && json.store) setPartyMaintenanceChecklistStore(json.store);
     } catch { await fetchPartyMaintenanceChecklists(); }
+  };
+
+  const regeneratePartyMaintenancePin = async (item: PartyMaintenanceChecklistItem<PartyMaintenanceTarget>) => {
+    if (regeneratingPinKey) return;
+    setRegeneratingPinKey(item.key);
+    try {
+      const res = await fetch(`/api/party-maintenance-checklists/${encodeURIComponent(item.key)}/pin/regenerate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountEmail: item.target.accountEmail, serviceType: item.target.serviceType }),
+      });
+      const json = await res.json() as { ok?: boolean; error?: string; store?: PartyMaintenanceChecklistStore };
+      if (!res.ok || !json.ok) throw new Error(json.error || 'PIN 재생성 실패');
+      if (json.store) setPartyMaintenanceChecklistStore(json.store);
+    } catch (e: any) {
+      window.alert(e.message || 'PIN 재생성 실패');
+      await fetchPartyMaintenanceChecklists();
+    } finally {
+      setRegeneratingPinKey(null);
+    }
   };
 
   const fetchChatAlerts = async (silent = false) => {
@@ -1121,7 +1168,9 @@ export default function HomePage() {
 
           <PartyMaintenancePanel
             items={partyMaintenanceChecklistItems}
+            regeneratingPinKey={regeneratingPinKey}
             onUpdate={updatePartyMaintenanceChecklist}
+            onRegeneratePin={regeneratePartyMaintenancePin}
             onGoManage={() => navigate('/manage')}
             onGoWrite={() => navigate('/write')}
           />

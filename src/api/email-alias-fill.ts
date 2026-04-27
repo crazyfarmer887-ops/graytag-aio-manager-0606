@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 export interface EmailAliasCandidate {
   id: number | string;
@@ -58,6 +58,47 @@ export function loadAliasPinStore(): Record<string, PinRecord> {
   } catch {
     return {};
   }
+}
+
+function saveAliasPinStore(store: Record<string, PinRecord>) {
+  const path = pinStorePath();
+  const dir = path.replace(/\/[^\/]+$/, '');
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  writeFileSync(path, JSON.stringify(store, null, 2), 'utf8');
+}
+
+function normalizeSixDigitPin(pin: string) {
+  const digits = pin.replace(/\D/g, '');
+  return /^\d{6}$/.test(digits) ? digits : null;
+}
+
+export function generateSixDigitPin(random = Math.random): string {
+  return String(Math.floor(random() * 1_000_000)).padStart(6, '0');
+}
+
+export async function updateEmailAliasPin(input: {
+  accountEmail: string;
+  serviceType: string;
+  aliases: EmailAliasCandidate[];
+  pin: string;
+}, now = new Date().toISOString()): Promise<EmailAliasFillResult> {
+  const accountEmail = input.accountEmail.trim();
+  const serviceType = input.serviceType.trim();
+  const pin = normalizeSixDigitPin(input.pin);
+  if (!pin) {
+    return { ok: false, found: false, email: accountEmail, serviceType, emailId: null, pin: null, memo: '', missing: ['pin'], message: 'PIN은 6자리 숫자여야 해요.' };
+  }
+  const pinStore = loadAliasPinStore();
+  const alias = chooseAlias(accountEmail, serviceType, input.aliases, pinStore)
+    || input.aliases.find(a => a && a.id !== undefined && a.email && a.enabled !== false)
+    || null;
+  if (!alias) {
+    return { ok: false, found: false, email: accountEmail, serviceType, emailId: null, pin: null, memo: '', missing: ['email'], message: '이 계정과 연결된 이메일 대시보드 alias를 찾지 못했어요.' };
+  }
+  const key = String(alias.id);
+  const nextStore = { ...pinStore, [key]: { ...(pinStore[key] || {}), pin, updatedAt: now } };
+  saveAliasPinStore(nextStore);
+  return { ok: true, found: true, email: alias.email, serviceType, emailId: alias.id, pin, memo: makeEmailVerifyMemo(alias.id, pin), missing: [] };
 }
 
 export function makeEmailVerifyMemo(emailId: string | number, pin: string): string {

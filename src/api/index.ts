@@ -8,7 +8,7 @@ import { sendSellerAlert } from '../alerts/telegram';
 import { appendAuditLog, auditRequestId, readAuditLog } from './audit-log';
 import { assertPriceChangeAllowed, loadPriceSafetyConfig, previewPriceChange, recordSuccessfulPriceDecrease, savePriceSafetyConfig } from './price-safety';
 import { loadSafeModeConfig, saveSafeModeConfig } from './safe-mode';
-import { resolveEmailAliasFill } from './email-alias-fill';
+import { generateSixDigitPin, resolveEmailAliasFill, updateEmailAliasPin } from './email-alias-fill';
 import { buildFinishedDealsUrl } from '../lib/graytag-fill';
 import { planUndercutterPriceChange } from '../lib/undercutter-price';
 import { DEFAULT_MANAGEMENT_CACHE_TTL_MS, isAutoSessionManagementRequest, managementCache, shouldForceManagementRefresh } from './management-cache';
@@ -2918,6 +2918,34 @@ app.post('/party-maintenance-checklists/:key', async (c) => {
   const store = mergePartyMaintenanceChecklistState(loadPartyMaintenanceChecklistStore(), key, body || {}, 'dashboard');
   savePartyMaintenanceChecklistStore(store);
   return c.json({ ok: true, item: store[key], store });
+});
+
+app.post('/party-maintenance-checklists/:key/pin/regenerate', async (c) => {
+  const { key } = c.req.param();
+  const body = await c.req.json().catch(() => ({})) as any;
+  const accountEmail = String(body.accountEmail || '').trim();
+  const serviceType = String(body.serviceType || '').trim();
+  if (!key || !accountEmail) return c.json({ ok: false, error: 'key and accountEmail required' }, 400);
+  try {
+    const res = await fetch(`${EMAIL_SERVER}/api/sl/aliases?page=0`);
+    const data = await res.json() as any;
+    const aliases = Array.isArray(data?.aliases) ? data.aliases : [];
+    const pin = generateSixDigitPin();
+    const updatedAt = new Date().toISOString();
+    const emailResult = await updateEmailAliasPin({ accountEmail, serviceType, aliases, pin }, updatedAt);
+    if (!emailResult.ok) return c.json({ ok: false, error: emailResult.message || 'email dashboard PIN update failed' }, 404);
+    const store = mergePartyMaintenanceChecklistState(loadPartyMaintenanceChecklistStore(), key, {
+      recruitAgain: true,
+      pinStillUnchanged: false,
+      generatedPin: pin,
+      generatedPinAliasId: emailResult.emailId,
+      generatedPinAt: updatedAt,
+    }, 'dashboard', updatedAt);
+    savePartyMaintenanceChecklistStore(store);
+    return c.json({ ok: true, pin, emailId: emailResult.emailId, email: emailResult.email, item: store[key], store });
+  } catch (e: any) {
+    return c.json({ ok: false, error: e.message || 'PIN regeneration failed' }, 500);
+  }
 });
 
 // POST: 피드백 재생성

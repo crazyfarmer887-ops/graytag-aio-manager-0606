@@ -28,53 +28,82 @@ describe('party maintenance checklist', () => {
       profileRemoved: null,
       devicesLoggedOut: null,
       passwordChanged: null,
-      pinChanged: null,
+      changedPassword: '',
+      pinStillUnchanged: null,
+      generatedPin: '',
       subscriptionKept: null,
-      subscriptionPeriod: '',
+      subscriptionBillingDay: '',
       subscriptionCancelled: null,
       progress: { done: 0, total: 1 },
       nextAction: '재모집 여부 선택',
     });
   });
 
-  test('Y branch tracks account cleanup and clears subscription cancellation', () => {
+  test('Y branch stores billing day, changed password, and PIN regeneration fields', () => {
     const key = partyMaintenanceChecklistKey(targets[0]);
     const store = mergePartyMaintenanceChecklistState({}, key, {
       recruitAgain: true,
       subscriptionKept: true,
-      subscriptionPeriod: '2026-05-01 ~ 2026-05-31',
+      subscriptionBillingDay: '15일',
       profileRemoved: true,
       devicesLoggedOut: true,
-      passwordChanged: false,
-      pinChanged: true,
+      passwordChanged: true,
+      changedPassword: 'new-password-123',
+      pinStillUnchanged: false,
+      generatedPin: '123456',
+      generatedPinAliasId: 777,
       subscriptionCancelled: true,
     }, 'tester');
     const [item] = buildPartyMaintenanceChecklistItems(targets, store);
     expect(item.subscriptionCancelled).toBeNull();
-    expect(item.subscriptionKept).toBe(true);
-    expect(item.subscriptionPeriod).toBe('2026-05-01 ~ 2026-05-31');
-    expect(item.progress).toEqual({ done: 6, total: 7 });
+    expect(item.subscriptionBillingDay).toBe('15');
+    expect(item.changedPassword).toBe('new-password-123');
+    expect(item.pinStillUnchanged).toBe(false);
+    expect(item.generatedPin).toBe('123456');
+    expect(item.generatedPinAliasId).toBe(777);
+    expect(item.progress).toEqual({ done: 9, total: 9 });
+    expect(item.nextAction).toBe('재모집 준비 완료');
   });
 
-  test('N branch tracks subscription cancellation and clears account cleanup fields', () => {
+  test('Y branch requires billing day and changed password when their Y answers are selected', () => {
+    const key = partyMaintenanceChecklistKey(targets[0]);
+    const store = mergePartyMaintenanceChecklistState({}, key, {
+      recruitAgain: true,
+      subscriptionKept: true,
+      subscriptionBillingDay: '45',
+      passwordChanged: true,
+      changedPassword: '',
+      pinStillUnchanged: true,
+    }, 'tester');
+    const [item] = buildPartyMaintenanceChecklistItems(targets, store);
+    expect(item.subscriptionBillingDay).toBe('');
+    expect(item.progress).toEqual({ done: 4, total: 9 });
+    expect(item.nextAction).toBe('구독 결제일 입력');
+  });
+
+  test('N branch tracks subscription cancellation and clears Y-branch-only fields', () => {
     const key = partyMaintenanceChecklistKey(targets[0]);
     const store = mergePartyMaintenanceChecklistState({}, key, {
       recruitAgain: false,
       profileRemoved: true,
       devicesLoggedOut: true,
       passwordChanged: true,
-      pinChanged: true,
+      changedPassword: 'stale-password',
+      pinStillUnchanged: false,
+      generatedPin: '654321',
       subscriptionKept: true,
-      subscriptionPeriod: '2026-05-01 ~ 2026-05-31',
+      subscriptionBillingDay: '15',
       subscriptionCancelled: false,
     }, 'tester');
     const [item] = buildPartyMaintenanceChecklistItems(targets, store);
     expect(item.profileRemoved).toBeNull();
     expect(item.devicesLoggedOut).toBeNull();
     expect(item.passwordChanged).toBeNull();
-    expect(item.pinChanged).toBeNull();
+    expect(item.changedPassword).toBe('');
+    expect(item.pinStillUnchanged).toBeNull();
+    expect(item.generatedPin).toBe('');
     expect(item.subscriptionKept).toBeNull();
-    expect(item.subscriptionPeriod).toBe('');
+    expect(item.subscriptionBillingDay).toBe('');
     expect(item.progress).toEqual({ done: 2, total: 2 });
     expect(item.nextAction).toBe('구독 해지 여부 확인');
   });
