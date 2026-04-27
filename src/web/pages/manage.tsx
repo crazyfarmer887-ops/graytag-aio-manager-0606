@@ -132,13 +132,19 @@ function ProfileAuditPanel({ data, manualMembers }: { data: ManageData; manualMe
 
   const runCheck = async () => {
     const targetRows = rows.filter(row => row.status === 'unchecked' || row.status === 'mismatch' || row.status === 'error').slice(0, 20);
+    const rowsWithSecrets = targetRows.map(row => {
+      const account = data.services
+        .flatMap(service => service.accounts)
+        .find(account => account.serviceType === row.serviceType && account.email === row.accountEmail);
+      return row.serviceType === '넷플릭스' ? { ...row, keepPasswd: account?.keepPasswd || '' } : row;
+    });
     if (targetRows.length === 0) return;
     setRunning(true); setError(null);
     try {
       const res = await fetch('/api/profile-audit/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rows: targetRows }),
+        body: JSON.stringify({ rows: rowsWithSecrets }),
       });
       const json = await res.json() as { results?: ProfileAuditStore; error?: string };
       if (!res.ok) throw new Error(json.error || '프로필 검증 실행 실패');

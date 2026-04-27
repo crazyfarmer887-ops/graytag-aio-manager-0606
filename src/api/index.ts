@@ -13,6 +13,7 @@ import { buildFinishedDealsUrl } from '../lib/graytag-fill';
 import { DEFAULT_MANAGEMENT_CACHE_TTL_MS, isAutoSessionManagementRequest, managementCache, shouldForceManagementRefresh } from './management-cache';
 import { buildProfileAuditRows, profileAuditKey, runProfileCheckPlaceholder, summarizeProfileAudit, type ProfileAuditRow, type ProfileAuditStore } from '../lib/profile-audit';
 import { loadProfileAuditStore, saveProfileAuditStore } from './profile-audit';
+import { checkNetflixProfiles, fetchNetflixEmailCodeViaEmailServer } from './netflix-profile-checker';
 
 const EMAIL_SERVER = "http://127.0.0.1:3001";
 const app = new Hono();
@@ -930,10 +931,19 @@ const profileAuditRunHandler = async (c: any) => {
   const store: ProfileAuditStore = loadProfileAuditStore();
   const checkedRows: ProfileAuditRow[] = [];
   for (const row of rows.slice(0, 20)) {
-    const result = await runProfileCheckPlaceholder(row);
+    const rowWithSecret = row as ProfileAuditRow & { keepPasswd?: string; password?: string };
+    const result = row.serviceType === '넷플릭스'
+      ? await checkNetflixProfiles({
+          email: row.accountEmail,
+          password: rowWithSecret.keepPasswd || rowWithSecret.password || '',
+          expectedPartyCount: row.expectedPartyCount,
+          fetchEmailCode: ({ email, requestedAfter }) => fetchNetflixEmailCodeViaEmailServer({ email, requestedAfter, emailServer: EMAIL_SERVER }),
+        })
+      : await runProfileCheckPlaceholder(row);
     store[profileAuditKey(row.serviceType, row.accountEmail)] = result;
-    checkedRows.push({
-      ...row,
+      const { keepPasswd: _keepPasswd, password: _password, ...safeRow } = rowWithSecret;
+      checkedRows.push({
+        ...safeRow,
       actualProfileCount: result.actualProfileCount,
       checkedAt: result.checkedAt,
       checker: result.checker,
