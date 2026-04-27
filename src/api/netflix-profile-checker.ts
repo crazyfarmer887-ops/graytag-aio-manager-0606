@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { compareProfileCounts, type ProfileAuditStoredResult, type ProfileAuditStatus } from '../lib/profile-audit';
 
 const NETFLIX_PROFILE_SELECTORS = [
@@ -28,10 +30,35 @@ export interface NetflixCheckResult extends ProfileAuditStoredResult {
   status: ProfileAuditStatus;
 }
 
+export function netflixErrorResult(message: string): NetflixCheckResult {
+  return {
+    actualProfileCount: null,
+    checkedAt: new Date().toISOString(),
+    checker: 'netflix-browser',
+    status: 'error',
+    message,
+  };
+}
+
+function localChromeCandidates(): string[] {
+  return [
+    process.env.CHROMIUM_PATH || '',
+    resolve(process.cwd(), '.cache/puppeteer/chrome/linux-148.0.7778.56/chrome-linux64/chrome'),
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/google-chrome',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+  ].filter(Boolean);
+}
+
+export function resolveChromiumExecutablePath(): string {
+  return localChromeCandidates().find((candidate) => existsSync(candidate)) || '/usr/bin/chromium-browser';
+}
+
 export async function launchDefaultChromium() {
   const puppeteer = await (new Function('specifier', 'return import(specifier)') as any)('puppeteer-core');
   return puppeteer.launch({
-    executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium-browser',
+    executablePath: resolveChromiumExecutablePath(),
     headless: true,
     args: [
       '--no-sandbox',
@@ -117,11 +144,16 @@ async function maybeSubmitEmailCode(page: any, input: NetflixCheckInput, request
 }
 
 export async function checkNetflixProfiles(input: NetflixCheckInput): Promise<NetflixCheckResult> {
-  if (!input.email?.trim()) throw new Error('넷플릭스 이메일이 필요해요.');
-  if (!input.password?.trim()) throw new Error('넷플릭스 비밀번호가 필요해요.');
+  if (!input.email?.trim()) return netflixErrorResult('넷플릭스 이메일이 필요해요.');
+  if (!input.password?.trim()) return netflixErrorResult('넷플릭스 비밀번호가 필요해요.');
 
   const launchBrowser = input.launchBrowser || launchDefaultChromium;
-  const browser = await launchBrowser();
+  let browser: any;
+  try {
+    browser = await launchBrowser();
+  } catch (error: any) {
+    return netflixErrorResult(`브라우저 실행 실패: ${error?.message || 'Chromium을 시작하지 못했어요.'}`);
+  }
   const requestedAfter = Math.floor(Date.now() / 1000);
 
   try {
@@ -151,13 +183,7 @@ export async function checkNetflixProfiles(input: NetflixCheckInput): Promise<Ne
 
     throw new Error('넷플릭스 로그인은 되었지만 프로필 선택 화면을 찾지 못했어요.');
   } catch (error: any) {
-    return {
-      actualProfileCount: null,
-      checkedAt: new Date().toISOString(),
-      checker: 'netflix-browser',
-      status: 'error',
-      message: error?.message || '넷플릭스 프로필 조회 실패',
-    };
+    return netflixErrorResult(error?.message || '넷플릭스 프로필 조회 실패');
   } finally {
     try { await browser.close(); } catch { /* ignore close failure */ }
   }

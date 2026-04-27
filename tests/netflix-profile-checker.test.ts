@@ -70,4 +70,28 @@ describe('netflix profile checker', () => {
     expect(String(fetchMock.mock.calls[0][0])).toContain('/email/list?alias=alias%40example.com&limit=20');
     fetchMock.mockRestore();
   });
+
+  test('returns an error result instead of throwing when required credentials are missing', async () => {
+    const result = await checkNetflixProfiles({
+      email: 'netflix@example.com',
+      password: '',
+      expectedPartyCount: 3,
+    });
+
+    expect(result.status).toBe('error');
+    expect(result.message).toContain('비밀번호');
+  });
+
+  test('returns an error result instead of throwing when Chromium cannot launch', async () => {
+    const result = await checkNetflixProfiles({
+      email: 'netflix@example.com',
+      password: 'secret',
+      expectedPartyCount: 3,
+      launchBrowser: async () => { throw new Error('browser launch failed'); },
+    });
+
+    expect(result.status).toBe('error');
+    expect(result.actualProfileCount).toBeNull();
+    expect(result.message).toContain('브라우저 실행 실패');
+  });
 });
