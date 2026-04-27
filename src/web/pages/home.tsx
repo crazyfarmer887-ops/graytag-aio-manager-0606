@@ -4,7 +4,8 @@ import { MonthlyCalendarWidget } from "./profit";
 import { useLocation } from "wouter";
 import { CATEGORIES } from "../lib/constants";
 import { buildExpiredPartyItems, buildServiceStats, type ExpiredPartyItem } from "../lib/dashboard-stats";
-import { RefreshCw, ChevronRight, User, Loader2, TrendingUp, TrendingDown, Wallet, CheckCircle2, RotateCcw, Settings, Zap, ShieldAlert } from "lucide-react";
+import { buildChatAlerts, type ChatAlertItem, type ChatAlertRoom } from "../lib/chat-alerts";
+import { RefreshCw, ChevronRight, User, Loader2, TrendingUp, TrendingDown, Wallet, CheckCircle2, RotateCcw, Settings, Zap, ShieldAlert, Bell, MessageCircle } from "lucide-react";
 import { Card, StatCard } from "../components/ui/card";
 import { StatusBadge } from "../components/ui/status-badge";
 
@@ -590,6 +591,56 @@ function ExpiredPartyPanel({ items }: { items: ExpiredPartyItem[] }) {
   );
 }
 
+function ChatAlertsPanel({ alerts, unreadCount, loading, updatedAt, error, onOpenChat }: { alerts: ChatAlertItem[]; unreadCount: number; loading: boolean; updatedAt: string | null; error: string | null; onOpenChat: () => void }) {
+  return (
+    <Card tone={unreadCount > 0 ? 'warning' : 'info'} style={{ marginBottom: 16 }}>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, marginBottom:10 }}>
+        <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+          <Bell size={16} color={unreadCount > 0 ? '#F59E0B' : '#7C3AED'} />
+          <div>
+            <div style={{ fontSize:14, fontWeight:900, color:'#1E1B4B' }}>실시간 채팅 알림</div>
+            <div style={{ fontSize:10, color:'#9CA3AF', marginTop:2 }}>{updatedAt ? `${updatedAt} 갱신` : '구매자 문의를 확인하는 중'}</div>
+          </div>
+        </div>
+        <button onClick={onOpenChat} style={{ border:'none', borderRadius:999, padding:'6px 10px', background:'#EDE9FE', color:'#7C3AED', fontSize:11, fontWeight:800, cursor:'pointer', display:'flex', alignItems:'center', gap:5 }}>
+          <MessageCircle size={13} /> 채팅 열기
+        </button>
+      </div>
+      <div style={{ display:'flex', gap:8, marginBottom:10 }}>
+        <div style={{ flex:1, background:'#FFF7ED', border:'1px solid #FED7AA', borderRadius:12, padding:'8px 10px' }}>
+          <div style={{ fontSize:17, fontWeight:950, color:'#F97316' }}>{unreadCount}</div>
+          <div style={{ fontSize:10, color:'#9CA3AF' }}>안 읽은 문의</div>
+        </div>
+        <div style={{ flex:1, background:'#F8F6FF', border:'1px solid #EDE9FE', borderRadius:12, padding:'8px 10px' }}>
+          <div style={{ fontSize:17, fontWeight:950, color:'#7C3AED' }}>{alerts.length}</div>
+          <div style={{ fontSize:10, color:'#9CA3AF' }}>최근 문의 표시</div>
+        </div>
+      </div>
+      {error && <div style={{ background:'#FFF0F0', color:'#EF4444', borderRadius:10, padding:'8px 10px', fontSize:11, marginBottom:8 }}>{error}</div>}
+      {loading && alerts.length === 0 ? (
+        <div style={{ color:'#9CA3AF', fontSize:12, padding:'10px 0' }}>채팅 알림 조회중...</div>
+      ) : alerts.length === 0 ? (
+        <div style={{ color:'#9CA3AF', fontSize:12, padding:'10px 0' }}>새 구매자 문의가 없어요.</div>
+      ) : (
+        <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+          {alerts.map(alert => (
+            <div key={alert.id} style={{ background: alert.unread ? '#FFFBEB' : '#FAFAFF', border:`1px solid ${alert.unread ? '#FDE68A' : '#EDE9FE'}`, borderRadius:13, padding:'10px 11px' }}>
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8 }}>
+                <div style={{ minWidth:0 }}>
+                  <div style={{ fontSize:12, fontWeight:900, color:'#1E1B4B', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{alert.title}</div>
+                  <div style={{ fontSize:10, color:'#9CA3AF', marginTop:2, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{alert.productName}</div>
+                </div>
+                {alert.unread && <span style={{ fontSize:9, fontWeight:900, color:'#B45309', background:'#FEF3C7', borderRadius:999, padding:'3px 7px', flexShrink:0 }}>NEW</span>}
+              </div>
+              <div style={{ fontSize:11, color:'#6B21A8', marginTop:7, lineHeight:1.35, wordBreak:'break-word' }}>“{alert.message}”</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 // ─── HomePage ────────────────────────────────────────────────────
 export default function HomePage() {
   const [data, setData] = useState<ManageData | null>(null);
@@ -597,6 +648,11 @@ export default function HomePage() {
   const [sellerStatus, setSellerStatus] = useState<SellerStatus | null>(null);
   const [safeMode, setSafeMode] = useState<SafeModeState | null>(null);
   const [safeModeSaving, setSafeModeSaving] = useState(false);
+  const [chatAlerts, setChatAlerts] = useState<ChatAlertItem[]>([]);
+  const [chatUnreadCount, setChatUnreadCount] = useState(0);
+  const [chatUpdatedAt, setChatUpdatedAt] = useState<string | null>(null);
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [, navigate] = useLocation();
@@ -615,6 +671,24 @@ export default function HomePage() {
       if (!res.ok) return;
       setSafeMode(await res.json() as SafeModeState);
     } catch { /* 안전 모드 배너는 보조 정보라 홈 조회를 막지 않음 */ }
+  };
+
+  const fetchChatAlerts = async (silent = false) => {
+    if (!silent) setChatLoading(true);
+    setChatError(null);
+    try {
+      const res = await fetch('/api/chat/rooms');
+      const json = await res.json() as { rooms?: ChatAlertRoom[]; unreadCount?: number; updatedAt?: string; error?: string };
+      if (!res.ok) throw new Error(json.error || '채팅 알림 조회 실패');
+      const alerts = buildChatAlerts(json.rooms || [], 5);
+      setChatAlerts(alerts);
+      setChatUnreadCount(json.unreadCount ?? alerts.filter((item) => item.unread).length);
+      setChatUpdatedAt(json.updatedAt ? formatShortTime(json.updatedAt) : formatShortTime(new Date().toISOString()));
+    } catch (e: any) {
+      setChatError(e.message || '채팅 알림 조회 실패');
+    } finally {
+      if (!silent) setChatLoading(false);
+    }
   };
 
   const toggleSafeMode = async () => {
@@ -666,7 +740,11 @@ export default function HomePage() {
     finally { setLoading(false); }
   };
 
-  useEffect(() => { fetchData(); fetchSellerStatus(); fetchSafeMode(); }, []);
+  useEffect(() => {
+    fetchData(); fetchSellerStatus(); fetchSafeMode(); fetchChatAlerts();
+    const timer = window.setInterval(() => fetchChatAlerts(true), 15000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const stats = data ? buildServiceStats(data, manuals) : [];
   const expiredParties = data ? buildExpiredPartyItems(data, manuals) : [];
@@ -724,7 +802,7 @@ export default function HomePage() {
             <p style={{ fontSize: 12, color: '#9CA3AF', margin: '4px 0 0' }}>{formatTime(data.updatedAt)}{"최신화"}</p>
           )}
         </div>
-        <button onClick={() => { fetchData(); fetchSellerStatus(); fetchSafeMode(); }} disabled={loading}
+        <button onClick={() => { fetchData(); fetchSellerStatus(); fetchSafeMode(); fetchChatAlerts(); }} disabled={loading}
           style={{ background: '#EDE9FE', border: 'none', borderRadius: 12, padding: '8px 12px', cursor: loading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#7C3AED', fontWeight: 600, fontFamily: 'inherit', opacity: loading ? 0.7 : 1 }}>
           {loading ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <RefreshCw size={14} strokeWidth={2.5} />}
           {loading ? '조회중' : '새로고침'}
@@ -836,6 +914,15 @@ export default function HomePage() {
                   : '세션, 자동화, 파티 채움 상태에 큰 이상이 없어요.'}
             </div>
           </Card>
+
+          <ChatAlertsPanel
+            alerts={chatAlerts}
+            unreadCount={chatUnreadCount}
+            loading={chatLoading}
+            updatedAt={chatUpdatedAt}
+            error={chatError}
+            onOpenChat={() => navigate('/chat')}
+          />
 
           <section style={{ marginBottom: 18 }}>
             <h2 style={{ fontSize: 15, fontWeight: 900, color: 'var(--foreground)', margin: '0 0 10px' }}>바로가기</h2>

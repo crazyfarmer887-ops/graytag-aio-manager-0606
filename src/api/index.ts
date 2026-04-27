@@ -1087,6 +1087,7 @@ app.get('/chat/rooms', async (c) => {
           price: d.price,
           keepAcct: d.keepAcct,
           lastMessage: undefined as string | undefined,
+          lastMessageTime: undefined as string | undefined,
         };
 
         // 최신 메시지 조회 (첫 페이지만)
@@ -1106,6 +1107,7 @@ app.get('/chat/rooms', async (c) => {
                 .replace(/<[^>]+>/g, '')
                 .trim()
                 .slice(0, 50);
+              room.lastMessageTime = userMsg.registeredDateTime || userMsg.createdAt || userMsg.updatedAt;
             }
           }
         } catch (e) {
