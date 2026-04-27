@@ -11,6 +11,7 @@ const ADMIN_REQUIRED_GET_PREFIXES = [
   "/api/audit-log",
   "/api/safe-mode",
   "/api/email-alias-fill",
+  "/api/profile-audit",
 ];
 
 export type AdminAuthFailureDetail = {
@@ -26,10 +27,14 @@ function canUseStorage(): boolean {
   return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
 }
 
+function normalizeAdminToken(token: string): string {
+  return token.replace(/[\r\n\t ]+/g, '').trim();
+}
+
 export function getAdminToken(): string {
   if (!canUseStorage()) return "";
   try {
-    return window.localStorage.getItem(ADMIN_TOKEN_STORAGE_KEY)?.trim() || "";
+    return normalizeAdminToken(window.localStorage.getItem(ADMIN_TOKEN_STORAGE_KEY) || "");
   } catch {
     return "";
   }
@@ -37,7 +42,7 @@ export function getAdminToken(): string {
 
 export function setAdminToken(token: string): void {
   if (!canUseStorage()) return;
-  const normalized = token.trim();
+  const normalized = normalizeAdminToken(token);
   try {
     if (normalized) window.localStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, normalized);
     else window.localStorage.removeItem(ADMIN_TOKEN_STORAGE_KEY);
