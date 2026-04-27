@@ -54,4 +54,15 @@ describe('admin auth fetch patch', () => {
     const [, init] = fetchMock.mock.calls[0];
     expect(new Headers(init.headers).get('x-admin-token')).toBe('safe-token');
   });
+
+  test('removes invisible unicode characters that make mobile Safari reject header values', async () => {
+    const fetchMock = setupBrowser();
+    setAdminToken('\u200bsafe-token\u00a0');
+    installAdminAuthFetchPatch();
+
+    await (window.fetch as any)('/api/profile-audit/run', { method: 'POST' });
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(new Headers(init.headers).get('x-admin-token')).toBe('safe-token');
+  });
 });

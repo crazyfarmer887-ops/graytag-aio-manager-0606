@@ -28,7 +28,7 @@ function canUseStorage(): boolean {
 }
 
 function normalizeAdminToken(token: string): string {
-  return token.replace(/[\r\n\t ]+/g, '').trim();
+  return token.replace(/[^\x21-\x7E]+/g, '').trim();
 }
 
 export function getAdminToken(): string {
