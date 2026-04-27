@@ -2309,23 +2309,7 @@ async function runAutoUndercutter(dryRun = false): Promise<{ results: UndercutRe
 
         // 7) dryRun이면 미리보기만
         if (dryRun) {
-          const safetyConfig = loadPriceSafetyConfig();
-          const plans = myProducts.map((p: any) => {
-            const pDaily = parseInt((p.pricePerDay || '0').replace(/[^0-9]/g, '') || '0');
-            const days = p.remainderDays || 0;
-            const current = Number(String(p.purePrice ?? p.price ?? (pDaily * days)).replace(/[^0-9]/g, '') || '0');
-            return planUndercutterPriceChange({
-              currentPrice: current,
-              targetDaily,
-              remainderDays: days,
-              maxDecreaseOnce: safetyConfig.maxDecreaseOnce,
-              minPrice: safetyConfig.minPrice,
-            });
-          });
-          const steppedCount = plans.filter((p) => p.stepped).length;
-          const previewReason = steppedCount > 0
-            ? `[미리보기] ${myLowestDaily}원 → 목표 ${targetDaily}원/일, ${steppedCount}개는 안전장치 때문에 단계 인하`
-            : `[미리보기] ${myLowestDaily}원 → ${targetDaily}원/일 (경쟁자: ${rivalName} ${rivalDaily}원)`;
+          const previewReason = `[미리보기] ${myLowestDaily}원 → ${targetDaily}원/일 한 번에 적용 (경쟁자: ${rivalName} ${rivalDaily}원)`;
           results.push({
             category: cat.label, action: 'updated',
             reason: previewReason,
@@ -2341,7 +2325,6 @@ async function runAutoUndercutter(dryRun = false): Promise<{ results: UndercutRe
 
         const cookieStr = buildCookieStr(cookies);
         let updatedCount = 0;
-        let steppedCount = 0;
 
         for (const myProduct of myProducts) {
           const myPpd = parseInt((myProduct.pricePerDay || '0').replace(/[^0-9]/g, '') || '0');
@@ -2351,6 +2334,7 @@ async function runAutoUndercutter(dryRun = false): Promise<{ results: UndercutRe
 
           const currentTotalPrice = Number(String(myProduct.purePrice ?? myProduct.price ?? (myPpd * remainDays)).replace(/[^0-9]/g, '') || '0');
           const safetyConfig = loadPriceSafetyConfig();
+          const oneShotSafetyConfig = { ...safetyConfig, maxDecreaseOnce: Number.MAX_SAFE_INTEGER };
           const pricePlan = planUndercutterPriceChange({
             currentPrice: currentTotalPrice,
             targetDaily,
@@ -2359,7 +2343,6 @@ async function runAutoUndercutter(dryRun = false): Promise<{ results: UndercutRe
             minPrice: safetyConfig.minPrice,
           });
           const newTotalPrice = pricePlan.nextPrice;
-          if (pricePlan.stepped) steppedCount++;
           if (newTotalPrice < 1000) continue;
 
           const safety = assertPriceChangeAllowed({
@@ -2367,7 +2350,7 @@ async function runAutoUndercutter(dryRun = false): Promise<{ results: UndercutRe
             title: myProduct.title ?? myProduct.name,
             currentPrice: currentTotalPrice,
             nextPrice: newTotalPrice,
-          }, safetyConfig);
+          }, oneShotSafetyConfig);
           if (!safety.allowed) {
             results.push({
               category: cat.label,
@@ -2414,7 +2397,7 @@ async function runAutoUndercutter(dryRun = false): Promise<{ results: UndercutRe
                 title: myProduct.title ?? myProduct.name,
                 currentPrice: currentTotalPrice,
                 nextPrice: newTotalPrice,
-              }, safetyConfig);
+              }, oneShotSafetyConfig);
               updatedCount++;
             }
           } catch {}
@@ -2424,8 +2407,8 @@ async function runAutoUndercutter(dryRun = false): Promise<{ results: UndercutRe
 
         const summaryAction: UndercutResult['action'] = updatedCount > 0 ? 'updated' : 'skip';
         const summaryReason = updatedCount > 0
-          ? `${myLowestDaily}원 → ${targetDaily}원/일 (경쟁자: ${rivalName} ${rivalDaily}원${steppedCount > 0 ? `, ${steppedCount}개 단계 인하` : ''})`
-          : `변경된 게시물 없음 (목표 ${targetDaily}원/일${steppedCount > 0 ? `, ${steppedCount}개 단계 인하 시도` : ''})`;
+          ? `${myLowestDaily}원 → ${targetDaily}원/일 한 번에 적용 (경쟁자: ${rivalName} ${rivalDaily}원)`
+          : `변경된 게시물 없음 (목표 ${targetDaily}원/일)`;
         results.push({
           category: cat.label, action: summaryAction,
           reason: summaryReason,
