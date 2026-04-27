@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { CATEGORIES } from "../lib/constants";
 import { buildAccountSlotStates, dedupeRecruitingProducts, mergeRecruitingProducts, type SlotState } from "../lib/account-slots";
 import { assertAutoDeliveryInput, buildFillProductModel } from "../../lib/graytag-fill";
+import { buildProfileAuditRows, summarizeProfileAudit, type ProfileAuditRow, type ProfileAuditStore } from "../../lib/profile-audit";
 import { RefreshCw, KeyRound, Mail, ChevronDown, ChevronRight, TrendingUp, Loader2, AlertCircle, ExternalLink, Calendar, UserX, Megaphone, PlusCircle, X, UserPlus, Trash2, Activity, Wifi, WifiOff } from "lucide-react";
 
 interface OnSaleProduct {
@@ -107,6 +108,107 @@ interface ManualMember {
 const SOURCE_PRESETS = ['당근마켓', '에브리타임', '지인소개', '번개장터', '카카오톡', '네이버카페', '인스타그램', '기타'];
 
 type FilterMode = 'using'|'active'|'all';
+
+function ProfileAuditPanel({ data, manualMembers }: { data: ManageData; manualMembers: ManualMember[] }) {
+  const [rows, setRows] = useState<ProfileAuditRow[]>(() => buildProfileAuditRows(data as any, manualMembers as any, {}));
+  const [loading, setLoading] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const refreshRows = async () => {
+    setLoading(true); setError(null);
+    try {
+      const res = await fetch('/api/profile-audit/results');
+      const json = await res.json() as { results?: ProfileAuditStore; error?: string };
+      if (!res.ok) throw new Error(json.error || '프로필 검증 결과 조회 실패');
+      setRows(buildProfileAuditRows(data as any, manualMembers as any, json.results || {}));
+    } catch (e: any) {
+      setError(e.message || '프로필 검증 결과 조회 실패');
+      setRows(buildProfileAuditRows(data as any, manualMembers as any, {}));
+    } finally { setLoading(false); }
+  };
+
+  useEffect(() => { refreshRows(); }, [data, manualMembers]);
+
+  const runCheck = async () => {
+    const targetRows = rows.filter(row => row.status === 'unchecked' || row.status === 'mismatch' || row.status === 'error').slice(0, 20);
+    if (targetRows.length === 0) return;
+    setRunning(true); setError(null);
+    try {
+      const res = await fetch('/api/profile-audit/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rows: targetRows }),
+      });
+      const json = await res.json() as { results?: ProfileAuditStore; error?: string };
+      if (!res.ok) throw new Error(json.error || '프로필 검증 실행 실패');
+      setRows(buildProfileAuditRows(data as any, manualMembers as any, json.results || {}));
+    } catch (e: any) {
+      setError(e.message || '프로필 검증 실행 실패');
+    } finally { setRunning(false); }
+  };
+
+  const summary = summarizeProfileAudit(rows);
+  const tone = summary.mismatch > 0 ? '#EF4444' : summary.match > 0 ? '#10B981' : '#A78BFA';
+  const statusLabel = (row: ProfileAuditRow) => row.status === 'match' ? '일치'
+    : row.status === 'mismatch' ? '불일치'
+    : row.status === 'unsupported' ? '미지원'
+    : row.status === 'error' ? '오류'
+    : '미검증';
+  const statusColor = (row: ProfileAuditRow) => row.status === 'match' ? '#059669'
+    : row.status === 'mismatch' ? '#EF4444'
+    : row.status === 'unsupported' ? '#9CA3AF'
+    : row.status === 'error' ? '#DC2626'
+    : '#7C3AED';
+
+  return (
+    <div style={{ background:'#fff', borderRadius:18, padding:14, marginBottom:14, boxShadow:'0 2px 12px rgba(167,139,250,0.08)', border:'1.5px solid #F3F0FF' }}>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, marginBottom:10 }}>
+        <div>
+          <div style={{ display:'flex', alignItems:'center', gap:6, fontSize:14, fontWeight:800, color:'#1E1B4B' }}>
+            <Activity size={15} color={tone} /> 프로필 수 검증
+          </div>
+          <div style={{ fontSize:11, color:'#9CA3AF', marginTop:3 }}>실제 OTT 프로필 수와 계정관리 파티원 수 비교</div>
+        </div>
+        <button onClick={runCheck} disabled={running || loading || rows.length === 0}
+          style={{ border:'none', borderRadius:12, padding:'8px 11px', background:'#EDE9FE', color:'#7C3AED', fontSize:11, fontWeight:800, cursor:running?'not-allowed':'pointer', display:'flex', alignItems:'center', gap:5 }}>
+          {running ? <Loader2 size={13} style={{ animation:'spin 1s linear infinite' }} /> : <RefreshCw size={13} />}
+          {running ? '검증중' : '검증 시작'}
+        </button>
+      </div>
+
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:6, marginBottom:10, textAlign:'center' }}>
+        {[
+          ['전체', summary.total, '#6B7280'], ['일치', summary.match, '#059669'], ['불일치', summary.mismatch, '#EF4444'], ['미검증', summary.unchecked + summary.unsupported, '#7C3AED'],
+        ].map(([label, value, color]) => (
+          <div key={String(label)} style={{ background:'#F8F6FF', borderRadius:10, padding:'7px 4px' }}>
+            <div style={{ fontSize:14, fontWeight:900, color: String(color) }}>{String(value)}</div>
+            <div style={{ fontSize:9, color:'#9CA3AF', marginTop:2 }}>{String(label)}</div>
+          </div>
+        ))}
+      </div>
+      {error && <div style={{ background:'#FFF0F0', color:'#EF4444', borderRadius:10, padding:'8px 10px', fontSize:11, marginBottom:8 }}>{error}</div>}
+      <div style={{ display:'flex', flexDirection:'column', gap:7, maxHeight:260, overflowY:'auto' }}>
+        {rows.slice(0, 12).map(row => (
+          <div key={row.id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, background:'#FAFAFF', border:'1px solid #F3F0FF', borderRadius:12, padding:'9px 10px' }}>
+            <div style={{ minWidth:0 }}>
+              <div style={{ display:'flex', alignItems:'center', gap:6, flexWrap:'wrap' }}>
+                <span style={{ fontSize:12, fontWeight:800, color:'#1E1B4B' }}>{row.serviceType}</span>
+                <span style={{ fontSize:10, fontWeight:800, color:statusColor(row), background:'#fff', borderRadius:999, padding:'2px 7px' }}>{statusLabel(row)}</span>
+              </div>
+              <div style={{ fontSize:10, color:'#9CA3AF', marginTop:3, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{row.accountEmail}</div>
+              {row.message && <div style={{ fontSize:9, color:'#C084FC', marginTop:3 }}>{row.message}</div>}
+            </div>
+            <div style={{ textAlign:'right', flexShrink:0 }}>
+              <div style={{ fontSize:12, fontWeight:900, color:'#1E1B4B' }}>{row.actualProfileCount ?? '-'} / {row.expectedPartyCount}</div>
+              <div style={{ fontSize:9, color:'#9CA3AF', marginTop:2 }}>실제 / 관리</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export default function ManagePage() {
   const cookies = loadCookies();
@@ -772,6 +874,8 @@ https://email-verify.xyz/email/mail/${eid}
               ))}
             </div>
           </div>
+
+          <ProfileAuditPanel data={data} manualMembers={manualMembers} />
 
           {/* 필터 */}
           <div style={{ display:'flex', gap:6, marginBottom:14 }}>

@@ -11,6 +11,8 @@ import { loadSafeModeConfig, saveSafeModeConfig } from './safe-mode';
 import { resolveEmailAliasFill } from './email-alias-fill';
 import { buildFinishedDealsUrl } from '../lib/graytag-fill';
 import { DEFAULT_MANAGEMENT_CACHE_TTL_MS, isAutoSessionManagementRequest, managementCache, shouldForceManagementRefresh } from './management-cache';
+import { buildProfileAuditRows, profileAuditKey, runProfileCheckPlaceholder, summarizeProfileAudit, type ProfileAuditRow, type ProfileAuditStore } from '../lib/profile-audit';
+import { loadProfileAuditStore, saveProfileAuditStore } from './profile-audit';
 
 const EMAIL_SERVER = "http://127.0.0.1:3001";
 const app = new Hono();
@@ -28,6 +30,7 @@ const ADMIN_REQUIRED_GET_PREFIXES = [
   '/audit-log',
   '/safe-mode',
   '/email-alias-fill',
+  '/profile-audit',
 ];
 
 function normalizedApiPath(path: string): string {
@@ -901,6 +904,48 @@ app.get('/api/email-alias-fill', async (c) => {
     return c.json({ ok: false, found: false, email: accountEmail, serviceType, emailId: null, pin: null, memo: '', missing: ['email', 'pin'], error: e.message }, 500);
   }
 });
+
+const profileAuditResultsHandler = (c: any) => {
+  const store = loadProfileAuditStore();
+  return c.json({ ok: true, results: store, updatedAt: new Date().toISOString() });
+};
+app.get('/profile-audit/results', profileAuditResultsHandler);
+app.get('/api/profile-audit/results', profileAuditResultsHandler);
+
+const profileAuditRowsHandler = async (c: any) => {
+  const body = await c.req.json().catch(() => ({})) as any;
+  const data = body?.managementData;
+  if (!data?.services) return c.json({ ok: false, error: 'managementData.services is required' }, 400);
+  const rows = buildProfileAuditRows(data, Array.isArray(body?.manualMembers) ? body.manualMembers : [], loadProfileAuditStore());
+  return c.json({ ok: true, rows, summary: summarizeProfileAudit(rows), updatedAt: new Date().toISOString() });
+};
+app.post('/profile-audit/rows', profileAuditRowsHandler);
+app.post('/api/profile-audit/rows', profileAuditRowsHandler);
+
+const profileAuditRunHandler = async (c: any) => {
+  const body = await c.req.json().catch(() => ({})) as any;
+  const rows = Array.isArray(body?.rows) ? body.rows as ProfileAuditRow[] : [];
+  if (rows.length === 0) return c.json({ ok: false, error: 'rows are required' }, 400);
+
+  const store: ProfileAuditStore = loadProfileAuditStore();
+  const checkedRows: ProfileAuditRow[] = [];
+  for (const row of rows.slice(0, 20)) {
+    const result = await runProfileCheckPlaceholder(row);
+    store[profileAuditKey(row.serviceType, row.accountEmail)] = result;
+    checkedRows.push({
+      ...row,
+      actualProfileCount: result.actualProfileCount,
+      checkedAt: result.checkedAt,
+      checker: result.checker,
+      status: result.status || 'unchecked',
+      message: result.message || row.message,
+    });
+  }
+  saveProfileAuditStore(store);
+  return c.json({ ok: true, checkedRows, results: store, summary: summarizeProfileAudit(checkedRows), updatedAt: new Date().toISOString() });
+};
+app.post('/profile-audit/run', profileAuditRunHandler);
+app.post('/api/profile-audit/run', profileAuditRunHandler);
 
 // ── Email verify 서버(3001) 프록시 라우트 ──────────────────────────────────
 

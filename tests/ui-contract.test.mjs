@@ -36,4 +36,7 @@ test('OTT home and navigation use the refreshed UI structure', () => {
   assert.match(nav, /운영/);
   assert.match(nav, /자동화/);
   assert.match(admin, /인증됨|잠김|오류/);
+  const manage = read('src/web/pages/manage.tsx');
+  assert.match(manage, /프로필 수 검증/);
+  assert.match(manage, /실제 \/ 관리/);
 });
