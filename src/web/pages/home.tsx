@@ -626,6 +626,19 @@ function PartyMaintenancePanel({ items, onUpdate, onGoManage, onGoWrite }: { ite
                 </div>
                 {item.recruitAgain === true && (
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 6 }}>
+                    <ChecklistRow label="기존 구독이 유지됐는가" value={item.subscriptionKept} onChange={(value) => onUpdate(item.key, { subscriptionKept: value })} />
+                    {item.subscriptionKept === true && (
+                      <div style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 9, padding: '7px 8px' }}>
+                        <label style={{ display: 'block', fontSize: 10, color: '#047857', fontWeight: 900, marginBottom: 5 }}>구독 기간은 언제인가?</label>
+                        <input
+                          type="text"
+                          value={item.subscriptionPeriod}
+                          placeholder="예: 2026-05-01 ~ 2026-05-31"
+                          onChange={(event) => onUpdate(item.key, { subscriptionPeriod: event.target.value })}
+                          style={{ width: '100%', boxSizing: 'border-box', border: '1px solid #A7F3D0', borderRadius: 8, padding: '7px 9px', fontSize: 11, color: '#065F46', fontWeight: 700, outline: 'none', fontFamily: 'inherit', background: '#fff' }}
+                        />
+                      </div>
+                    )}
                     <ChecklistRow label="기존 파티원 프로필을 제거했는가" value={item.profileRemoved} onChange={(value) => onUpdate(item.key, { profileRemoved: value })} />
                     <ChecklistRow label="모든 기기에서 로그아웃했는가" value={item.devicesLoggedOut} onChange={(value) => onUpdate(item.key, { devicesLoggedOut: value })} />
                     <ChecklistRow label="비밀번호를 변경했는가" value={item.passwordChanged} onChange={(value) => onUpdate(item.key, { passwordChanged: value })} />

@@ -29,6 +29,8 @@ describe('party maintenance checklist', () => {
       devicesLoggedOut: null,
       passwordChanged: null,
       pinChanged: null,
+      subscriptionKept: null,
+      subscriptionPeriod: '',
       subscriptionCancelled: null,
       progress: { done: 0, total: 1 },
       nextAction: '재모집 여부 선택',
@@ -39,6 +41,8 @@ describe('party maintenance checklist', () => {
     const key = partyMaintenanceChecklistKey(targets[0]);
     const store = mergePartyMaintenanceChecklistState({}, key, {
       recruitAgain: true,
+      subscriptionKept: true,
+      subscriptionPeriod: '2026-05-01 ~ 2026-05-31',
       profileRemoved: true,
       devicesLoggedOut: true,
       passwordChanged: false,
@@ -47,7 +51,9 @@ describe('party maintenance checklist', () => {
     }, 'tester');
     const [item] = buildPartyMaintenanceChecklistItems(targets, store);
     expect(item.subscriptionCancelled).toBeNull();
-    expect(item.progress).toEqual({ done: 4, total: 5 });
+    expect(item.subscriptionKept).toBe(true);
+    expect(item.subscriptionPeriod).toBe('2026-05-01 ~ 2026-05-31');
+    expect(item.progress).toEqual({ done: 6, total: 7 });
   });
 
   test('N branch tracks subscription cancellation and clears account cleanup fields', () => {
@@ -58,6 +64,8 @@ describe('party maintenance checklist', () => {
       devicesLoggedOut: true,
       passwordChanged: true,
       pinChanged: true,
+      subscriptionKept: true,
+      subscriptionPeriod: '2026-05-01 ~ 2026-05-31',
       subscriptionCancelled: false,
     }, 'tester');
     const [item] = buildPartyMaintenanceChecklistItems(targets, store);
@@ -65,6 +73,8 @@ describe('party maintenance checklist', () => {
     expect(item.devicesLoggedOut).toBeNull();
     expect(item.passwordChanged).toBeNull();
     expect(item.pinChanged).toBeNull();
+    expect(item.subscriptionKept).toBeNull();
+    expect(item.subscriptionPeriod).toBe('');
     expect(item.progress).toEqual({ done: 2, total: 2 });
     expect(item.nextAction).toBe('구독 해지 여부 확인');
   });

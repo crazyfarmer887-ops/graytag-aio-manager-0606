@@ -35,6 +35,9 @@ test('OTT home and navigation use the refreshed UI structure', () => {
   assert.match(home, /이용중 0명|7일 이내 만료/);
   assert.match(home, /buildPartyMaintenanceTargets\(data/);
   assert.match(home, /해당 계정으로 또 다시 파티 모집을 진행할건가/);
+  assert.match(home, /기존 구독이 유지됐는가/);
+  assert.match(home, /구독 기간은 언제인가/);
+  assert.match(home, /subscriptionPeriod/);
   assert.match(home, /기존 파티원 프로필을 제거했는가/);
   assert.match(home, /구독을 해지했는가/);
   assert.match(home, /party-maintenance-checklists/);
