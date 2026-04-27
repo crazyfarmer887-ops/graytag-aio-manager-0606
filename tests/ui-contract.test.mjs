@@ -60,4 +60,8 @@ test('OTT home and navigation use the refreshed UI structure', () => {
   assert.match(manage, /검증 진척도/);
   assert.match(manage, /profile-audit\/progress/);
   assert.match(manage, /실제 \/ 관리/);
+  assert.match(manage, /findExactPasswordForAccount/);
+  assert.match(manage, /requireExactAliasMemoForAutoFill/);
+  assert.match(manage, /전체 메꾸기 미리보기 필요/);
+  assert.doesNotMatch(manage, /ANY product with a password from ANY account/);
 });

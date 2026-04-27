@@ -36,6 +36,42 @@ export function assertAutoDeliveryInput(input: { keepAcct?: string; keepPasswd?:
   return null;
 }
 
+export interface PasswordCandidate {
+  keepAcct?: string;
+  productType?: string;
+  serviceType?: string;
+  keepPasswd?: string;
+}
+
+function sameNormalizedText(a: string | undefined, b: string | undefined): boolean {
+  return Boolean(a?.trim()) && Boolean(b?.trim()) && a!.trim().toLowerCase() === b!.trim().toLowerCase();
+}
+
+export function findExactPasswordForAccount(
+  accountEmail: string,
+  serviceType: string,
+  onSaleList: PasswordCandidate[] = [],
+  onSaleByKeepAcct: Record<string, PasswordCandidate[]> = {},
+): string {
+  const candidates = [
+    ...onSaleList,
+    ...(onSaleByKeepAcct[accountEmail] || []),
+  ];
+  const found = candidates.find((item) =>
+    sameNormalizedText(item.keepAcct, accountEmail)
+    && (sameNormalizedText(item.productType, serviceType) || sameNormalizedText(item.serviceType, serviceType))
+    && Boolean(item.keepPasswd?.trim())
+  );
+  return found?.keepPasswd?.trim() || '';
+}
+
+export function requireExactAliasMemoForAutoFill(input: { statusOk?: boolean; memo?: string; expectedMemo?: string }): string | null {
+  if (!input.statusOk) return '이메일/PIN 정보를 정확히 찾은 계정만 자동 등록할 수 있어요.';
+  if (!input.memo?.trim()) return '계정 전달 문구가 없어 자동전달 설정을 할 수 없어요.';
+  if (input.expectedMemo !== undefined && input.memo.trim() !== input.expectedMemo.trim()) return '계정 전달 문구가 Email Dashboard에서 확인된 내용과 다르게 변경되어 자동 등록할 수 없어요.';
+  return null;
+}
+
 export function buildFinishedDealsUrl(kind: 'after' | 'before', page: number, rows = 500, finishedDealIncluded = true): string {
   const endpoint = kind === 'after' ? 'findAfterUsingLenderDeals' : 'findBeforeUsingLenderDeals';
   return `https://graytag.co.kr/ws/lender/${endpoint}?finishedDealIncluded=${finishedDealIncluded ? 'true' : 'false'}&sorting=Latest&page=${page}&rows=${rows}`;

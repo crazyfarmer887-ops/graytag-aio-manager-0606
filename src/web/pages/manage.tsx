@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { CATEGORIES } from "../lib/constants";
 import { buildAccountSlotStates, dedupeRecruitingProducts, mergeRecruitingProducts, type SlotState } from "../lib/account-slots";
 import { removeRecruitingProductFromManageData } from "../lib/manage-optimistic";
-import { assertAutoDeliveryInput, buildFillProductModel } from "../../lib/graytag-fill";
+import { assertAutoDeliveryInput, buildFillProductModel, findExactPasswordForAccount, requireExactAliasMemoForAutoFill } from "../../lib/graytag-fill";
 import { buildProfileAuditRows, summarizeProfileAudit, type ProfileAuditRow, type ProfileAuditStore } from "../../lib/profile-audit";
 import { RefreshCw, KeyRound, Mail, ChevronDown, ChevronRight, TrendingUp, Loader2, AlertCircle, ExternalLink, Calendar, UserX, Megaphone, PlusCircle, X, UserPlus, Trash2, Activity, Wifi, WifiOff } from "lucide-react";
 
@@ -283,12 +283,11 @@ export default function ManagePage() {
   const [fillPriceMode, setFillPriceMode] = useState<'total'|'daily'>('total');
   const [fillCount, setFillCount] = useState(1);
   const [fillKeepMemo, setFillKeepMemo] = useState('');
-  const [fillAliasStatus, setFillAliasStatus] = useState<{ ok: boolean; message: string } | null>(null);
+  const [fillAliasStatus, setFillAliasStatus] = useState<{ ok: boolean; message: string; email?: string; serviceType?: string; memo?: string } | null>(null);
   const [fillAliasLoading, setFillAliasLoading] = useState(false);
   const [fillLoading, setFillLoading] = useState(false);
   const [fillResult, setFillResult] = useState<string|null>(null);
   const [fillRank, setFillRank] = useState<{rank:number;total:number}|null>(null);
-  const [slAliases, setSlAliases] = useState<{id:number;email:string;pin:string|null}[]>([]);
 
   // ─── 수동 파티원 관련 state ────────────────────────────
   const [manualMembers, setManualMembers] = useState<ManualMember[]>([]);
@@ -391,70 +390,6 @@ export default function ManagePage() {
   const getManualForAccount = (email: string, serviceType: string) =>
     manualMembers.filter(m => m.accountEmail === email && m.serviceType === serviceType);
 
-  useEffect(() => {
-    fetch('/api/sl/aliases?page=0').then(r => { if (!r.ok) throw new Error('fetch failed'); return r.json(); }).then((d: any) => {
-      setSlAliases((d.aliases || []).filter((a: any) => a.enabled));
-    }).catch(() => {});
-  }, []);
-
-  // 기존 keepMemo에서 PIN 추출 ("핀번호는 : XXXX입니다!" 패턴)
-  const extractPinFromMemo = (memo?: string): string | null => {
-    if (!memo) return null;
-    const m = memo.match(/핀번호는 : (.+?)입니다!/);
-    return m && m[1] && m[1] !== '{PIN}' ? m[1].trim() : null;
-  };
-
-  // 기존 keepMemo에서 이메일 ID 추출 ("/email/mail/XXXX" 패턴)
-  const extractEmailIdFromMemo = (memo?: string): string | null => {
-    if (!memo) return null;
-    const m = memo.match(/\/email\/mail\/(\d+)/);
-    return m ? m[1] : null;
-  };
-
-  // 서비스 타입으로 alias 찾기 (이메일 주소가 다르므로)
-  const getAliasForService = (serviceType: string) => {
-    // 서비스 타입에서 keyword 추출. 티빙은 웨이브+티빙 번들 alias(wavve*)로 전달한다.
-    const normalized = serviceType.toLowerCase();
-    const keywords = /티빙|티방|tving|gtwavve|gtwalve/.test(normalized)
-      ? ['tving', 'wavve']
-      : [normalized];
-    // slAliases에서 해당 서비스 이메일 찾기 (이메일에 서비스명 포함된 것)
-    let serviceAliases = slAliases.filter(a =>
-      a.enabled && keywords.some(keyword => a.email.toLowerCase().includes(keyword)) && a.pin
-    );
-    // 가장 최근의 alias 반환 (id가 높을수록 최근)
-    return serviceAliases.length > 0 ? serviceAliases.sort((a, b) => b.id - a.id)[0] : null;
-  };
-
-  const makeKeepMemo = (email: string, serviceType: string, existingMemo?: string) => {
-    // 1. keepAcct 이메일로 직접 alias 매칭 (가장 정확)
-    let alias = slAliases.find(a => a.email === email && a.pin);
-    // 2. 서비스 타입 키워드로 alias 검색
-    if (!alias) alias = getAliasForService(serviceType);
-    // 3. 실패 시 기존 메모에서 추출
-    if (!alias) {
-      const eid = extractEmailIdFromMemo(existingMemo);
-      const pin = extractPinFromMemo(existingMemo);
-      if (eid && pin) {
-        alias = { id: parseInt(eid), email: 'unknown', enabled: true, pin, hasPin: true, creation_date: '', creation_timestamp: 0, nb_block: 0, nb_forward: 0, nb_reply: 0, note: '' };
-      }
-    }
-
-    const pin = alias?.pin || '{PIN}';
-    const eid = alias?.id || '{EMAIL_ID}';
-
-    return `✅ 아래 내용 꼭 읽어주세요! 로그인 관련 내용입니다!! ✅
-로그인 시도 간 필요한 이메일 코드는 아래 사이트에서 언제든지 셀프인증 가능합니다!
-https://email-verify.xyz/email/mail/${eid}
-사이트에서 필요한 핀번호는 : ${pin}입니다!
-
-프로필을 만드실 때, 본명에서 가운데 글자를 별(*)로 가려주세요!
-만약, 특수기호 사용이 불가할 경우 본명으로 설정 부탁드립니다! 예)홍길동 또는 홍*동
-만약, 접속 시 기본 프로필 1개만 있거나 자리가 꽉 찼는데 기본 프로필이 있다면 그걸 먼저 수정하고 사용하시면 되겠습니다!
-
-즐거운 시청되세요!`;
-  };
-
   const loadFillMemoFromEmailDashboard = async (email: string, serviceType: string, fallbackMemo = '') => {
     setFillAliasLoading(true);
     setFillAliasStatus(null);
@@ -463,7 +398,7 @@ https://email-verify.xyz/email/mail/${eid}
       const data = await res.json() as any;
       if (res.ok && data?.ok && data.memo) {
         setFillKeepMemo(data.memo);
-        setFillAliasStatus({ ok: true, message: `이메일 대시보드 DB에서 자동 입력됨: #${data.emailId}` });
+        setFillAliasStatus({ ok: true, message: `이메일 대시보드 DB에서 자동 입력됨: #${data.emailId}`, email, serviceType, memo: data.memo });
         return data.memo as string;
       }
 
@@ -474,36 +409,19 @@ https://email-verify.xyz/email/mail/${eid}
           ? '이 계정 이메일의 PIN 번호가 이메일 대시보드에 없어요.'
           : (data?.message || data?.error || '이메일/PIN 정보를 찾지 못했어요.');
       setFillKeepMemo(fallbackMemo || '');
-      setFillAliasStatus({ ok: false, message });
+      setFillAliasStatus({ ok: false, message, email, serviceType });
       return '';
     } catch (e: any) {
       setFillKeepMemo(fallbackMemo || '');
-      setFillAliasStatus({ ok: false, message: `이메일 대시보드 조회 실패: ${e.message}` });
+      setFillAliasStatus({ ok: false, message: `이메일 대시보드 조회 실패: ${e.message}`, email, serviceType });
       return '';
     } finally {
       setFillAliasLoading(false);
     }
   };
 
-  const findPasswdByEmail = (email: string, onSaleList: OnSaleProduct[]): string => {
-    // 1st: from this email's onSale list
-    const fromOnSale = onSaleList.find(p => p.keepPasswd)?.keepPasswd;
-    if (fromOnSale) return fromOnSale;
-    // 2nd: from any product matching this email
-    if (data?.onSaleByKeepAcct) {
-      for (const products of Object.values(data.onSaleByKeepAcct)) {
-        const found = (products as OnSaleProduct[]).find(p => p.keepAcct === email && p.keepPasswd)?.keepPasswd;
-        if (found) return found;
-      }
-    }
-    // 3rd fallback: ANY product with a password from ANY account
-    if (data?.onSaleByKeepAcct) {
-      for (const products of Object.values(data.onSaleByKeepAcct)) {
-        const found = (products as OnSaleProduct[]).find(p => p.keepPasswd)?.keepPasswd;
-        if (found) return found;
-      }
-    }
-    return '';
+  const findPasswdByEmail = (email: string, serviceType: string, onSaleList: OnSaleProduct[]): string => {
+    return findExactPasswordForAccount(email, serviceType, onSaleList, data?.onSaleByKeepAcct || {});
   };
   const [fillRankLoading, setFillRankLoading] = useState(false);
 
@@ -598,6 +516,19 @@ https://email-verify.xyz/email/mail/${eid}
     const cs = cookies.find(c => c.id === selectedId);
     if (!cs) return;
     setFillLoading(true); setFillResult(null);
+    const aliasMatchesModal = fillAliasStatus?.email === fillModal.keepAcct && fillAliasStatus?.serviceType === fillModal.serviceType;
+    const aliasInputError = requireExactAliasMemoForAutoFill({ statusOk: fillAliasStatus?.ok === true && aliasMatchesModal, memo: fillKeepMemo, expectedMemo: fillAliasStatus?.memo });
+    if (aliasInputError) {
+      setFillResult(`자동 등록 차단: ${aliasInputError}`);
+      setFillLoading(false);
+      return;
+    }
+    const deliveryInputErrorBeforeCreate = assertAutoDeliveryInput({ keepAcct: fillModal.keepAcct, keepPasswd: fillModal.keepPasswd, keepMemo: fillKeepMemo });
+    if (deliveryInputErrorBeforeCreate) {
+      setFillResult(`자동 등록 차단: ${deliveryInputErrorBeforeCreate}`);
+      setFillLoading(false);
+      return;
+    }
 
     const count = Math.max(1, Math.min(fillCount, fillModal.vacancy));
     let success = 0;
@@ -730,104 +661,10 @@ https://email-verify.xyz/email/mail/${eid}
             }
             if (totalUnfilled === 0) return null;
             return (
-              <button onClick={async () => {
-                if (!window.confirm(`빈 자리 ${totalUnfilled}개를 모두 메꾸기 하시겠습니까?`)) return;
-                setFillLoading(true); setFillResult(null);
-                const cs = cookies.find(c => c.id === selectedId);
-                if (!cs) { setFillLoading(false); return; }
-                let success = 0; let total = 0;
-                const createdByKeepAcct: Record<string, OnSaleProduct[]> = {};
-                const toGraytagDate = (ds: string) => { const d = new Date(ds); return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}T2359`; };
-                for (const svc of data.services) {
-                  for (const acct of svc.accounts) {
-                    if (acct.email === '(직접전달)') continue;
-                    const mx = getPartyMax(acct.serviceType);
-                    const vac = Math.max(0, mx - acct.usingCount);
-                    const onSaleList = dedupeRecruitingProducts(data.onSaleByKeepAcct?.[acct.email] || [])
-                      .filter(p => !p.productType || p.productType === acct.serviceType);
-                    const unfilled = Math.max(0, vac - onSaleList.length);
-                    if (unfilled <= 0) continue;
-                    const refProduct = onSaleList[0];
-                    const passwd = refProduct?.keepPasswd || acct.keepPasswd || findPasswdByEmail(acct.email, onSaleList);
-                    const memo = makeKeepMemo(acct.email, acct.serviceType, refProduct?.keepMemo);
-                    const category = svcToCategory(acct.serviceType);
-                    // 기존 게시글에서 종료일/가격 참조, 없으면 이용중 파티원에서 폴백
-                    let endDate = refProduct?.endDateTime || '';
-                    let price = refProduct?.purePrice || 0;
-                    if (!endDate || price <= 0) {
-                      const uMem = acct.members.find((m: any) => (m.status === 'Using' || m.status === 'UsingNearExpiration') && m.endDateTime && m.purePrice > 0);
-                      if (uMem) {
-                        if (!endDate) endDate = uMem.endDateTime || '';
-                        if (price <= 0 && uMem.purePrice > 0 && uMem.startDateTime && uMem.endDateTime) {
-                          // 일당가 계산 후 남은 기간에 맞춰 총액 산출
-                          const pD = (d: string) => { const c = d.match(/^(\d{4})(\d{2})(\d{2})T/); if (c) return new Date(c[1]+'-'+c[2]+'-'+c[3]); const sh = d.replace(/\s/g,'').match(/^(\d{2})\.(\d{1,2})\.(\d{1,2})/); if (sh) { const y=parseInt(sh[1]); return new Date((y<50?2000+y:1900+y)+'-'+sh[2].padStart(2,'0')+'-'+sh[3].padStart(2,'0')); } return new Date(d.replace(/\s/g,'').replace(/\./g,'-').replace(/-$/,'')); };
-                          const s = pD(uMem.startDateTime); const e = pD(uMem.endDateTime);
-                          const days = Math.max(1, Math.ceil((e.getTime()-s.getTime())/86400000));
-                          const daily = Math.ceil(uMem.purePrice / days);
-                          const today = new Date(); today.setHours(0,0,0,0);
-                          const endD = pD(endDate || uMem.endDateTime);
-                          const remain = Math.max(1, Math.ceil((endD.getTime()-today.getTime())/86400000));
-                          price = daily * remain;
-                        }
-                      }
-                    }
-                    if (!endDate || price <= 0) continue;
-                    for (let i = 0; i < unfilled; i++) {
-                      total++;
-                      try {
-                        const productModel = buildFillProductModel({
-                          category,
-                          endDate: toGraytagDate(endDate),
-                          price,
-                          productName: refProduct?.productName || `✅ 이메일 코드 언제든지 셀프인증 가능! ✅ ${acct.serviceType} 프리미엄!`,
-                          serviceType: acct.serviceType,
-                        });
-                        const body = cs.id === AUTO_COOKIE_ID ? { productModel } : { AWSALB: cs.AWSALB, AWSALBCORS: cs.AWSALBCORS, JSESSIONID: cs.JSESSIONID, productModel };
-                        const res = await fetch('/api/post/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-                        const json = await res.json() as any;
-                        if (!res.ok || !json.productUsid) continue;
-                        const deliveryInputError = assertAutoDeliveryInput({ keepAcct: acct.email, keepPasswd: passwd, keepMemo: memo });
-                        if (deliveryInputError) continue;
-                        const keepBody = cs.id === AUTO_COOKIE_ID
-                          ? { productUsid: json.productUsid, keepAcct: acct.email, keepPasswd: passwd, keepMemo: memo }
-                          : { AWSALB: cs.AWSALB, AWSALBCORS: cs.AWSALBCORS, JSESSIONID: cs.JSESSIONID, productUsid: json.productUsid, keepAcct: acct.email, keepPasswd: passwd, keepMemo: memo };
-                        const keepRes = await fetch('/api/post/keepAcct', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(keepBody) });
-                        if (!keepRes.ok) continue;
-                        const createdProduct: OnSaleProduct = {
-                          productUsid: String(json.productUsid),
-                          productName: productModel.name,
-                          productType: acct.serviceType,
-                          price: `${price.toLocaleString()}원`,
-                          purePrice: price,
-                          endDateTime: toGraytagDate(endDate),
-                          remainderDays: 0,
-                          keepAcct: acct.email,
-                          keepPasswd: passwd,
-                          keepMemo: memo,
-                        };
-                        createdByKeepAcct[acct.email] = mergeRecruitingProducts(createdByKeepAcct[acct.email] || [], [createdProduct]);
-                        success++;
-                      } catch {}
-                      await new Promise(r => setTimeout(r, 800));
-                    }
-                  }
-                }
-                setFillLoading(false);
-                setFillResult(`전체 메꾸기: ${success}/${total}개 완료`);
-                if (Object.keys(createdByKeepAcct).length > 0) {
-                  setData(prev => {
-                    if (!prev) return prev;
-                    const nextOnSale = { ...prev.onSaleByKeepAcct };
-                    for (const [keepAcct, additions] of Object.entries(createdByKeepAcct)) {
-                      nextOnSale[keepAcct] = mergeRecruitingProducts(nextOnSale[keepAcct] || [], additions);
-                    }
-                    return { ...prev, onSaleByKeepAcct: nextOnSale };
-                  });
-                }
-                setTimeout(() => { setFillResult(null); doFetch(); }, 2000);
-              }} disabled={fillLoading} style={{ background:'#EF4444', border:'none', borderRadius:12, padding:'8px 14px', fontSize:13, color:'#fff', cursor:fillLoading?'not-allowed':'pointer', fontWeight:600, fontFamily:'inherit', display:'flex', alignItems:'center', gap:6 }}>
+              <button disabled title="전체 메꾸기는 계정별 미리보기와 Email/PIN 확인 단계가 추가된 뒤 다시 열 예정이에요."
+                style={{ background:'#FCA5A5', border:'none', borderRadius:12, padding:'8px 14px', fontSize:13, color:'#fff', cursor:'not-allowed', fontWeight:600, fontFamily:'inherit', display:'flex', alignItems:'center', gap:6, opacity:0.75 }}>
                 <PlusCircle size={14} />
-                {fillLoading ? '메꾸는 중...' : `전체 메꾸기 (${totalUnfilled})`}
+                전체 메꾸기 미리보기 필요 ({totalUnfilled})
               </button>
             );
           })()}
@@ -1221,9 +1058,9 @@ https://email-verify.xyz/email/mail/${eid}
                                     const anyMember = acct.members.find(m => m.endDateTime && m.purePrice > 0);
                                     const refMember = usingMember || anyMember;
 
-                                    const autoPasswd = refOnSale?.keepPasswd || acct.keepPasswd || findPasswdByEmail(acct.email, vi.onSaleList);
+                                    const autoPasswd = refOnSale?.keepPasswd || acct.keepPasswd || findPasswdByEmail(acct.email, acct.serviceType, vi.onSaleList);
 
-                                    // keepMemo: OnSale > 이용중 멤버의 keepMemo(API에서 안 줌) > slAliases 기반 생성
+                                    // keepMemo: Email Dashboard exact alias/PIN 조회 성공 시에만 자동 등록 허용
                                     const existingMemo = refOnSale?.keepMemo || '';
 
                                     // endDateTime: OnSale 게시글 > 이용중 파티원의 endDateTime
@@ -1409,7 +1246,7 @@ https://email-verify.xyz/email/mail/${eid}
                 {fillAliasStatus.ok ? '자동 입력 완료' : '이메일/PIN 정보 없음'} · {fillAliasStatus.message}
               </div>
             )}
-            <textarea value={fillKeepMemo} onChange={e => setFillKeepMemo(e.target.value)}
+            <textarea value={fillKeepMemo} readOnly={fillAliasStatus?.ok === true} onChange={e => setFillKeepMemo(e.target.value)}
               placeholder={fillAliasStatus?.ok ? '이메일 대시보드 DB에서 자동 입력됐어요' : '이메일/PIN 정보가 있으면 자동으로 채워져요'}
               style={{ width:'100%', padding:'11px 14px', borderRadius:10, border:'1.5px solid #EDE9FE', fontSize:12, color:'#1E1B4B', background:'#F8F6FF', outline:'none', fontFamily:'inherit', marginBottom:10, boxSizing:'border-box', height:80, resize:'vertical' }} />
 
@@ -1426,13 +1263,13 @@ https://email-verify.xyz/email/mail/${eid}
             </div>
 
             {fillResult && (
-              <div style={{ background:'#F0FDF4', borderRadius:10, padding:'8px 14px', marginBottom:10, fontSize:12, color:'#059669', fontWeight:600 }}>{fillResult}</div>
+              <div style={{ background: /오류|실패|차단/.test(fillResult) ? '#FFF0F0' : '#F0FDF4', borderRadius:10, padding:'8px 14px', marginBottom:10, fontSize:12, color: /오류|실패|차단/.test(fillResult) ? '#EF4444' : '#059669', fontWeight:600 }}>{fillResult}</div>
             )}
 
-            <button onClick={handleFill} disabled={fillLoading || fillAliasLoading || fillAliasStatus?.ok === false || !fillEndDate || fillFinalPrice < 1000} style={{
+            <button onClick={handleFill} disabled={fillLoading || fillAliasLoading || fillAliasStatus?.ok !== true || fillAliasStatus?.email !== fillModal.keepAcct || fillAliasStatus?.serviceType !== fillModal.serviceType || !fillEndDate || fillFinalPrice < 1000} style={{
               width:'100%', padding:14, borderRadius:12, border:'none',
-              background: (fillLoading || fillAliasLoading || fillAliasStatus?.ok === false) ? '#C4B5FD' : '#A78BFA', color:'#fff', fontSize:15, fontWeight:700,
-              cursor: (fillLoading || fillAliasLoading || fillAliasStatus?.ok === false) ? 'not-allowed' : 'pointer', fontFamily:'inherit',
+              background: (fillLoading || fillAliasLoading || fillAliasStatus?.ok !== true || fillAliasStatus?.email !== fillModal.keepAcct || fillAliasStatus?.serviceType !== fillModal.serviceType) ? '#C4B5FD' : '#A78BFA', color:'#fff', fontSize:15, fontWeight:700,
+              cursor: (fillLoading || fillAliasLoading || fillAliasStatus?.ok !== true || fillAliasStatus?.email !== fillModal.keepAcct || fillAliasStatus?.serviceType !== fillModal.serviceType) ? 'not-allowed' : 'pointer', fontFamily:'inherit',
               boxShadow:'0 4px 16px rgba(167,139,250,0.35)',
               display:'flex', alignItems:'center', justifyContent:'center', gap:8,
             }}>
