@@ -12,7 +12,7 @@ import { resolveEmailAliasFill } from './email-alias-fill';
 import { buildFinishedDealsUrl } from '../lib/graytag-fill';
 import { DEFAULT_MANAGEMENT_CACHE_TTL_MS, isAutoSessionManagementRequest, managementCache, shouldForceManagementRefresh } from './management-cache';
 import { buildProfileAuditRows, profileAuditKey, runProfileCheckPlaceholder, summarizeProfileAudit, type ProfileAuditRow, type ProfileAuditStore } from '../lib/profile-audit';
-import { loadProfileAuditStore, saveProfileAuditStore } from './profile-audit';
+import { createProfileAuditProgress, finishProfileAuditProgress, loadProfileAuditStore, saveProfileAuditStore, updateProfileAuditProgress, type ProfileAuditProgress } from './profile-audit';
 import { checkNetflixProfiles, fetchNetflixEmailCodeViaEmailServer } from './netflix-profile-checker';
 
 const EMAIL_SERVER = "http://127.0.0.1:3001";
@@ -906,12 +906,18 @@ app.get('/api/email-alias-fill', async (c) => {
   }
 });
 
+let profileAuditProgress: ProfileAuditProgress = createProfileAuditProgress(0);
+finishProfileAuditProgress(profileAuditProgress, 'completed', '아직 실행 중인 프로필 검증이 없어요.');
+
 const profileAuditResultsHandler = (c: any) => {
   const store = loadProfileAuditStore();
-  return c.json({ ok: true, results: store, updatedAt: new Date().toISOString() });
+  return c.json({ ok: true, results: store, progress: profileAuditProgress, updatedAt: new Date().toISOString() });
 };
 app.get('/profile-audit/results', profileAuditResultsHandler);
 app.get('/api/profile-audit/results', profileAuditResultsHandler);
+
+app.get('/profile-audit/progress', (c) => c.json({ ok: true, progress: profileAuditProgress, updatedAt: new Date().toISOString() }));
+app.get('/api/profile-audit/progress', (c) => c.json({ ok: true, progress: profileAuditProgress, updatedAt: new Date().toISOString() }));
 
 const profileAuditRowsHandler = async (c: any) => {
   const body = await c.req.json().catch(() => ({})) as any;
@@ -928,31 +934,53 @@ const profileAuditRunHandler = async (c: any) => {
   const rows = Array.isArray(body?.rows) ? body.rows as ProfileAuditRow[] : [];
   if (rows.length === 0) return c.json({ ok: false, error: 'rows are required' }, 400);
 
+  const targetRows = rows.slice(0, 20);
+  profileAuditProgress = createProfileAuditProgress(targetRows.length);
   const store: ProfileAuditStore = loadProfileAuditStore();
   const checkedRows: ProfileAuditRow[] = [];
-  for (const row of rows.slice(0, 20)) {
-    const rowWithSecret = row as ProfileAuditRow & { keepPasswd?: string; password?: string };
-    const result = row.serviceType === '넷플릭스'
-      ? await checkNetflixProfiles({
-          email: row.accountEmail,
-          password: rowWithSecret.keepPasswd || rowWithSecret.password || '',
-          expectedPartyCount: row.expectedPartyCount,
-          fetchEmailCode: ({ email, requestedAfter }) => fetchNetflixEmailCodeViaEmailServer({ email, requestedAfter, emailServer: EMAIL_SERVER }),
-        })
-      : await runProfileCheckPlaceholder(row);
-    store[profileAuditKey(row.serviceType, row.accountEmail)] = result;
+  try {
+    for (let index = 0; index < targetRows.length; index += 1) {
+      const row = targetRows[index];
+      updateProfileAuditProgress(profileAuditProgress, {
+        completed: index,
+        currentServiceType: row.serviceType,
+        currentAccountEmail: row.accountEmail,
+        message: `${index + 1}/${targetRows.length} ${row.serviceType} 검사 중`,
+      });
+      const rowWithSecret = row as ProfileAuditRow & { keepPasswd?: string; password?: string };
+      const result = row.serviceType === '넷플릭스'
+        ? await checkNetflixProfiles({
+            email: row.accountEmail,
+            password: rowWithSecret.keepPasswd || rowWithSecret.password || '',
+            expectedPartyCount: row.expectedPartyCount,
+            fetchEmailCode: ({ email, requestedAfter }) => fetchNetflixEmailCodeViaEmailServer({ email, requestedAfter, emailServer: EMAIL_SERVER }),
+          })
+        : await runProfileCheckPlaceholder(row);
+      store[profileAuditKey(row.serviceType, row.accountEmail)] = result;
       const { keepPasswd: _keepPasswd, password: _password, ...safeRow } = rowWithSecret;
       checkedRows.push({
         ...safeRow,
-      actualProfileCount: result.actualProfileCount,
-      checkedAt: result.checkedAt,
-      checker: result.checker,
-      status: result.status || 'unchecked',
-      message: result.message || row.message,
-    });
+        actualProfileCount: result.actualProfileCount,
+        checkedAt: result.checkedAt,
+        checker: result.checker,
+        status: result.status || 'unchecked',
+        message: result.message || row.message,
+      });
+      updateProfileAuditProgress(profileAuditProgress, {
+        completed: index + 1,
+        currentServiceType: row.serviceType,
+        currentAccountEmail: row.accountEmail,
+        message: `${index + 1}/${targetRows.length} ${row.serviceType} 검사 완료`,
+      });
+    }
+    saveProfileAuditStore(store);
+    finishProfileAuditProgress(profileAuditProgress, 'completed');
+    return c.json({ ok: true, checkedRows, results: store, progress: profileAuditProgress, summary: summarizeProfileAudit(checkedRows), updatedAt: new Date().toISOString() });
+  } catch (error: any) {
+    finishProfileAuditProgress(profileAuditProgress, 'failed', error?.message || '프로필 검증 중 오류가 발생했어요.');
+    saveProfileAuditStore(store);
+    return c.json({ ok: false, checkedRows, results: store, progress: profileAuditProgress, error: profileAuditProgress.message, summary: summarizeProfileAudit(checkedRows), updatedAt: new Date().toISOString() }, 500);
   }
-  saveProfileAuditStore(store);
-  return c.json({ ok: true, checkedRows, results: store, summary: summarizeProfileAudit(checkedRows), updatedAt: new Date().toISOString() });
 };
 app.post('/profile-audit/run', profileAuditRunHandler);
 app.post('/api/profile-audit/run', profileAuditRunHandler);
