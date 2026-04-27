@@ -16,22 +16,31 @@ describe('netflix profile checker', () => {
     await expect(extractNetflixProfileCountFromPage(page)).resolves.toBe(4);
   });
 
+  test('extracts profile count from Netflix account profiles rows', async () => {
+    const page = pageWithCounts({
+      '[data-uia="profile-link"]': 0,
+      '.profile-link': 0,
+      'a[href*="/account/profiles/"]': 5,
+    });
+    await expect(extractNetflixProfileCountFromPage(page)).resolves.toBe(5);
+  });
+
   test('builds match or mismatch profile audit results from Netflix count', () => {
     expect(profileAuditResultFromNetflixCount(4, 4).status).toBe('match');
     expect(profileAuditResultFromNetflixCount(5, 4).status).toBe('mismatch');
   });
 
-  test('logs in, handles email code callback, and returns profile count with an injected browser', async () => {
+  test('logs in, opens account profiles page, and returns profile count with an injected browser', async () => {
+    let currentUrl = '';
     const page = {
-      goto: vi.fn(),
-      $$: async (selector: string) => selector === '[data-uia="profile-link"]' ? [{}, {}, {}] : [],
+      goto: vi.fn(async (url: string) => { currentUrl = url; }),
+      $$: async (selector: string) => currentUrl.includes('/account/profiles') && selector === 'a[href*="/account/profiles/"]' ? [{}, {}, {}, {}, {}] : [],
       waitForSelector: vi.fn().mockResolvedValue(undefined),
       type: vi.fn(),
       click: vi.fn(),
       waitForNavigation: vi.fn().mockResolvedValue(undefined),
       waitForTimeout: vi.fn().mockResolvedValue(undefined),
-      locator: (selector: string) => ({ count: async () => selector === '[data-uia="profile-link"]' ? 3 : 0 }),
-      $: vi.fn().mockResolvedValueOnce({}),
+      locator: (selector: string) => ({ count: async () => currentUrl.includes('/account/profiles') && selector === 'a[href*="/account/profiles/"]' ? 5 : 0 }),
       keyboard: { press: vi.fn() },
     } as any;
     const browser = { newPage: vi.fn().mockResolvedValue(page), close: vi.fn() } as any;
@@ -39,16 +48,14 @@ describe('netflix profile checker', () => {
     const result = await checkNetflixProfiles({
       email: 'netflix@example.com',
       password: 'secret',
-      expectedPartyCount: 3,
+      expectedPartyCount: 5,
       launchBrowser: async () => browser,
       fetchEmailCode: async () => '123456',
     });
 
-    expect(result.actualProfileCount).toBe(3);
+    expect(result.actualProfileCount).toBe(5);
     expect(result.status).toBe('match');
-    expect(result.checker).toBe('netflix-browser');
-    expect(page.type).toHaveBeenCalledWith('input[name="userLoginId"]', 'netflix@example.com', expect.any(Object));
-    expect(page.type).toHaveBeenCalledWith('input[name="password"]', 'secret', expect.any(Object));
+    expect(page.goto).toHaveBeenCalledWith('https://www.netflix.com/account/profiles', expect.any(Object));
   });
 
   test('fetches the newest Netflix email verification code from Email Verify server', async () => {

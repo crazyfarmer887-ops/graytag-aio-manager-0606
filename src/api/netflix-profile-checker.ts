@@ -8,6 +8,9 @@ const NETFLIX_PROFILE_SELECTORS = [
   '.profile-icon',
   'li.profile',
   '[data-uia="profile-choices"] a',
+  'a[href*="/account/profiles/"]',
+  'a[href*="/account/profile/"]',
+  '[data-uia*="profile"] a[href]',
 ];
 
 const NETFLIX_CODE_INPUT_SELECTORS = [
@@ -181,6 +184,10 @@ export async function checkNetflixProfiles(input: NetflixCheckInput): Promise<Ne
     ]);
 
     await maybeSubmitEmailCode(page, input, requestedAfter);
+
+    await page.goto('https://www.netflix.com/account/profiles', { waitUntil: 'networkidle2', timeout: 30000 }).catch(() => null);
+    const accountProfilesCount = await extractNetflixProfileCountFromPage(page);
+    if (accountProfilesCount > 0) return profileAuditResultFromNetflixCount(accountProfilesCount, input.expectedPartyCount);
 
     const count = await extractNetflixProfileCountFromPage(page);
     if (count > 0) return profileAuditResultFromNetflixCount(count, input.expectedPartyCount);
