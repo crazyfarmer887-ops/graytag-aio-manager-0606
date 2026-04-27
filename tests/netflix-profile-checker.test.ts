@@ -125,6 +125,33 @@ describe('netflix profile checker', () => {
     expect(result.message).toContain('비밀번호');
   });
 
+  test('returns a clear login challenge error when Netflix redirects back to login after account profiles', async () => {
+    let currentUrl = '';
+    const page = {
+      goto: vi.fn(async (url: string) => { currentUrl = url.includes('/account/profiles') ? 'https://www.netflix.com/kr-en/login?serverState=blocked' : url; }),
+      url: vi.fn(() => currentUrl),
+      $$: vi.fn(async () => []),
+      waitForSelector: vi.fn().mockResolvedValue(undefined),
+      type: vi.fn(),
+      click: vi.fn(),
+      waitForNavigation: vi.fn().mockResolvedValue(undefined),
+      waitForTimeout: vi.fn().mockResolvedValue(undefined),
+      keyboard: { press: vi.fn() },
+    } as any;
+    const browser = { newPage: vi.fn().mockResolvedValue(page), close: vi.fn() } as any;
+
+    const result = await checkNetflixProfiles({
+      email: 'netflix@example.com',
+      password: 'secret',
+      expectedPartyCount: 3,
+      launchBrowser: async () => browser,
+    });
+
+    expect(result.status).toBe('error');
+    expect(result.message).toContain('넷플릭스 로그인 확인이 필요해요');
+    expect(result.message).not.toContain('프로필 선택 화면');
+  });
+
   test('returns an error result instead of throwing when Chromium cannot launch', async () => {
     const result = await checkNetflixProfiles({
       email: 'netflix@example.com',

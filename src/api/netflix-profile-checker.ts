@@ -140,6 +140,19 @@ export async function fetchNetflixEmailCodeViaEmailServer(input: { email: string
   return null;
 }
 
+function currentPageUrl(page: any): string {
+  try {
+    return typeof page.url === 'function' ? String(page.url()) : '';
+  } catch {
+    return '';
+  }
+}
+
+function isNetflixLoginOrChallengePage(page: any): boolean {
+  const url = currentPageUrl(page).toLowerCase();
+  return url.includes('/login') || url.includes('recaptcha') || url.includes('serverstate=');
+}
+
 async function maybeSubmitEmailCode(page: any, input: NetflixCheckInput, requestedAfter: number) {
   const codeInput = await firstVisibleSelector(page, NETFLIX_CODE_INPUT_SELECTORS, 900);
   if (!codeInput || !input.fetchEmailCode) return false;
@@ -186,6 +199,9 @@ export async function checkNetflixProfiles(input: NetflixCheckInput): Promise<Ne
     await maybeSubmitEmailCode(page, input, requestedAfter);
 
     await page.goto('https://www.netflix.com/account/profiles', { waitUntil: 'networkidle2', timeout: 30000 }).catch(() => null);
+    if (isNetflixLoginOrChallengePage(page)) {
+      throw new Error('넷플릭스 로그인 확인이 필요해요. 자동 로그인 중 보안 확인/캡차가 떠서 계정 프로필 페이지에 들어가지 못했어요.');
+    }
     const accountProfilesCount = await extractNetflixProfileCountFromPage(page);
     if (accountProfilesCount > 0) return profileAuditResultFromNetflixCount(accountProfilesCount, input.expectedPartyCount);
 
