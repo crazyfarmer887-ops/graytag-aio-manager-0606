@@ -18,6 +18,13 @@ import { checkNetflixProfiles, fetchNetflixEmailCodeViaEmailServer } from './net
 import { extractGraytagChats, findLatestBuyerInquiryMessage } from './chat-message-summary';
 import { mergePartyMaintenanceChecklistState, type PartyMaintenanceChecklistStore } from '../lib/party-maintenance-checklist';
 import { buildProfileAssignment, type ProfileAssignment } from '../lib/profile-nickname';
+import { resolveAutoReplyPolicy } from './auto-reply-policy';
+import { normalizeBuyerMessage, messageFingerprint, messageTimestamp, isBuyerTextMessage } from './auto-reply-message';
+import { createAutoReplyJob, listAutoReplyJobs, loadAutoReplyJobStore, saveAutoReplyJobStore, updateAutoReplyJob, type AutoReplyJobStore } from './auto-reply-jobs';
+import { routeAutoReply } from './auto-reply-router';
+import { buildHermesAutoReplyPrompt, parseHermesAutoReplyJson, type HermesAutoReplyResult } from './hermes-auto-reply';
+import { evaluateAutoReplySafety } from './auto-reply-safety';
+import { decideAutonomousReply } from './auto-reply-autonomy';
 
 const EMAIL_SERVER = "http://127.0.0.1:3001";
 const app = new Hono();
@@ -1220,6 +1227,13 @@ app.get('/chat/poll', async (c) => {
   } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
+async function sendGraytagChatMessage(input: { chatRoomUuid: string; dealUsid?: string; message: string }) {
+  const args = ['/home/ubuntu/graytag-session/stomp-sender.cjs', input.chatRoomUuid, sanitizeForGraytag(input.message)];
+  if (input.dealUsid) args.push(input.dealUsid);
+  const { stdout } = await execFileAsync('node', args, { timeout: 20000, maxBuffer: 1024 * 1024 });
+  return JSON.parse(stdout.trim());
+}
+
 // STOMP를 통한 메시지 전송 (stomp-sender.cjs 사용)
 app.post('/chat/send', async (c) => {
   const requestId = auditRequestId(c);
@@ -1231,12 +1245,7 @@ app.post('/chat/send', async (c) => {
   }
 
   try {
-    const cp = await import('node:child_process');
-    const args = ['/home/ubuntu/graytag-session/stomp-sender.cjs', chatRoomUuid, message];
-    if (dealUsid) args.push(dealUsid);
-    const cmd = 'node ' + args.map(a => JSON.stringify(a)).join(' ');
-    const result = cp.execSync(cmd, { timeout: 20000 }).toString().trim();
-    const parsed = JSON.parse(result);
+    const parsed = await sendGraytagChatMessage({ chatRoomUuid, dealUsid, message });
     writeAudit({ actor: 'admin', action: 'chat.send', targetType: 'chatRoom', targetId: chatRoomUuid, summary: `chat message sent${dealUsid ? ` for deal ${dealUsid}` : ''}`, result: parsed?.ok === false ? 'error' : 'success', requestId, details: { dealUsid, response: parsed } });
     return c.json(parsed);
   } catch (e: any) {
@@ -1245,6 +1254,372 @@ app.post('/chat/send', async (c) => {
     return c.json({ ok: false, error }, 500);
   }
 });
+
+// ─── Hermes Agent 자동응답 MVP ───────────────────────────────
+const DEFAULT_AUTO_REPLY_JOBS_PATH = '/home/ubuntu/.hermes/hermes-agent/graytag-aio-manager-0606/data/auto-reply-jobs.json';
+function autoReplyJobsPath(): string {
+  return process.env.AUTO_REPLY_JOBS_PATH || DEFAULT_AUTO_REPLY_JOBS_PATH;
+}
+let AUTO_REPLY_MEMORY_STORE: AutoReplyJobStore = loadAutoReplyJobStore(autoReplyJobsPath());
+
+function persistAutoReplyJobs(): void {
+  saveAutoReplyJobStore(autoReplyJobsPath(), AUTO_REPLY_MEMORY_STORE);
+}
+
+function updateAutoReplyJobPersisted(...args: Parameters<typeof updateAutoReplyJob>) {
+  const job = updateAutoReplyJob(...args);
+  persistAutoReplyJobs();
+  return job;
+}
+
+function envFlag(name: string, defaultValue: boolean): boolean {
+  const value = process.env[name];
+  if (value === undefined || value === '') return defaultValue;
+  return value === 'true';
+}
+
+function loadAutoReplyRuntimeConfig(): AutoReplyConfig {
+  return loadAutoReplyConfig();
+}
+
+function loadAutoReplyPolicyFromConfig() {
+  const cfg = loadAutoReplyRuntimeConfig();
+  return resolveAutoReplyPolicy({
+    enabled: cfg.enabled && process.env.AUTO_REPLY_ENABLED !== 'false',
+    draftOnly: envFlag('AUTO_REPLY_DRAFT_ONLY', true),
+    autoSendAuthCode: envFlag('AUTO_REPLY_AUTO_SEND_AUTH_CODE', false),
+    autoSendLowRisk: envFlag('AUTO_REPLY_AUTO_SEND_LOW_RISK', false),
+  });
+}
+
+function autoReplyDelaySeconds(): number {
+  const cfg = loadAutoReplyRuntimeConfig();
+  return Math.max(0, Math.min(600, Math.floor(Number(cfg.delaySeconds || 0))));
+}
+
+function templateAutoReply(category: string): HermesAutoReplyResult {
+  if (category === 'auth_code_request') {
+    return {
+      category,
+      risk: 'low',
+      autoSendAllowed: true,
+      reply: '인증코드 확인 도와드릴게요. 새 코드가 도착하면 바로 확인해서 안내드리겠습니다.',
+      reason: '인증코드 요청 템플릿',
+      needsHuman: false,
+    };
+  }
+  return {
+    category,
+    risk: 'low',
+    autoSendAllowed: false,
+    reply: '확인 후 안내드리겠습니다.',
+    reason: '기본 템플릿 초안',
+    needsHuman: false,
+  };
+}
+
+async function runHermesJsonPrompt(prompt: string): Promise<string> {
+  const hermesCli = process.env.HERMES_CLI_PATH || '/home/ubuntu/.local/bin/hermes';
+  const { stdout } = await execFileAsync(hermesCli, ['chat', '-q', prompt, '--quiet'], {
+    timeout: Number(process.env.HERMES_AUTO_REPLY_TIMEOUT_MS || 45000),
+    maxBuffer: 1024 * 1024,
+    env: { ...process.env, PATH: `/home/ubuntu/.local/bin:${process.env.PATH || ''}` },
+  });
+  return stdout;
+}
+
+async function draftWithHermesOrFallback(job: any): Promise<HermesAutoReplyResult> {
+  if (process.env.AUTO_REPLY_USE_HERMES === 'false') {
+    return {
+      category: job.category || 'general',
+      risk: job.risk || 'medium',
+      autoSendAllowed: false,
+      reply: '불편드려 죄송합니다. 확인 후 바로 안내드리겠습니다.',
+      reason: 'Hermes 호출 비활성화 상태의 안전 초안',
+      needsHuman: false,
+    };
+  }
+  const cfg = loadAutoReplyRuntimeConfig();
+  const prompt = buildHermesAutoReplyPrompt({
+    buyerMessage: job.buyerMessage,
+    buyerName: job.buyerName,
+    productType: job.productType,
+    productName: job.productName,
+    systemPrompt: cfg.systemPrompt,
+  });
+  const stdout = await runHermesJsonPrompt(prompt);
+  return parseHermesAutoReplyJson(stdout);
+}
+
+function buildHermesManualReplyPrompt(input: { messages: any[]; productType?: string; systemPrompt?: string }): string {
+  const recentMessages = input.messages.slice(-10).map((message: any) => ({
+    role: message?.isOwned ? 'seller' : 'buyer',
+    content: String(message?.message || '').slice(0, 1000),
+  }));
+  return [
+    'You are Hermes Agent drafting a Graytag seller reply in Korean.',
+    'Return JSON only. No markdown. No commentary.',
+    'Schema: {"reply":"...","reason":"..."}',
+    'Keep the reply short, warm, and practical. 2-4 lines max.',
+    'Never reveal or ask for passwords, cookies, sessions, tokens, admin dashboards, or internal systems.',
+    'For password/login guidance, tell the buyer to check the delivered memo and remove copy/paste spaces.',
+    'For email verification code questions, guide them to the verification method in the delivered memo unless an explicit code is provided by the backend.',
+    'Never promise refunds. For disputes, apologize and say the seller will check and guide them.',
+    input.systemPrompt ? `Operator extra instructions: ${input.systemPrompt.slice(0, 2000)}` : '',
+    `Context: ${JSON.stringify({ productType: input.productType || '기타', recentMessages })}`,
+  ].filter(Boolean).join('\n');
+}
+
+function parseHermesManualReplyJson(output: string): { reply: string; reason?: string } {
+  const start = output.indexOf('{');
+  const end = output.lastIndexOf('}');
+  if (start < 0 || end < start) throw new Error('Hermes manual reply JSON missing object');
+  const parsed = JSON.parse(output.slice(start, end + 1));
+  if (!parsed || typeof parsed.reply !== 'string' || !parsed.reply.trim()) throw new Error('Hermes manual reply missing reply');
+  return { reply: parsed.reply.trim(), reason: typeof parsed.reason === 'string' ? parsed.reason : undefined };
+}
+
+async function tryFetchAuthCodeForJob(job: any): Promise<{ code: string | null; reason?: string }> {
+  const email = String(job.keepAcct || '').trim();
+  if (!email || !email.includes('@')) return { code: null, reason: '연결된 계정 이메일 없음' };
+  if (!String(job.productType || '').includes('넷플릭스') && !String(job.productName || '').toLowerCase().includes('netflix')) {
+    return { code: null, reason: '현재 자동 코드 조회는 넷플릭스 계정만 지원' };
+  }
+  try {
+    const requestedAfter = Math.floor((Date.now() - 15 * 60 * 1000) / 1000);
+    const code = await fetchNetflixEmailCodeViaEmailServer({ email, requestedAfter, emailServer: EMAIL_SERVER });
+    return code ? { code } : { code: null, reason: '최근 인증코드 없음' };
+  } catch (e: any) {
+    return { code: null, reason: e?.message || '이메일 서버 조회 실패' };
+  }
+}
+
+function recentAutoReplyTimesForRoom(chatRoomUuid: string): string[] {
+  return Object.values(AUTO_REPLY_MEMORY_STORE.jobs)
+    .filter((entry: any) => entry.chatRoomUuid === chatRoomUuid && entry.status === 'sent')
+    .map((entry: any) => entry.updatedAt || entry.createdAt)
+    .filter(Boolean);
+}
+
+async function notifyAutoReplyHuman(job: any, reason: string, severity: 'warning' | 'critical' = 'warning') {
+  await sendSellerAlert({
+    key: `auto-reply-human-${job.chatRoomUuid}-${reason}`,
+    title: '자동응답 사람 확인 필요',
+    body: [
+      `구매자: ${job.buyerName || '구매자'}`,
+      `상품: ${job.productType || '기타'} ${job.productName || ''}`.trim(),
+      `문의: ${String(job.buyerMessage || '').slice(0, 300)}`,
+      `사유: ${reason}`,
+      '대시보드: 채팅 > 자동응답 큐 확인',
+    ].join('\n'),
+    severity,
+    throttleMs: 10 * 60 * 1000,
+  });
+}
+
+async function processAutoReplyJob(job: any, dryRun: boolean) {
+  const route = routeAutoReply(job.buyerMessage);
+  updateAutoReplyJobPersisted(AUTO_REPLY_MEMORY_STORE, job.id, { category: route.category, risk: route.risk });
+  const policy = loadAutoReplyPolicyFromConfig();
+  const delaySeconds = autoReplyDelaySeconds();
+  if (delaySeconds > 0) {
+    const ageMs = Date.now() - new Date(job.createdAt || Date.now()).getTime();
+    if (Number.isFinite(ageMs) && ageMs < delaySeconds * 1000) {
+      updateAutoReplyJobPersisted(AUTO_REPLY_MEMORY_STORE, job.id, {
+        status: 'queued',
+        blockReason: `딜레이 대기 중 (${delaySeconds}초)`,
+      });
+      return { status: 'queued' };
+    }
+  }
+  const recentRoomReplyTimes = recentAutoReplyTimesForRoom(job.chatRoomUuid);
+
+  let authLookup: { code: string | null; reason?: string } = { code: null };
+  let hermesResult: HermesAutoReplyResult = templateAutoReply(route.category);
+  if (route.category === 'auth_code_request' || route.category === 'pin_or_email_link') {
+    authLookup = await tryFetchAuthCodeForJob(job);
+  } else if (route.action !== 'human_review') {
+    hermesResult = await draftWithHermesOrFallback({ ...job, category: route.category, risk: route.risk });
+  }
+
+  const autonomous = decideAutonomousReply({
+    buyerMessage: job.buyerMessage,
+    route,
+    hermes: hermesResult,
+    authCode: authLookup.code,
+    failureReason: authLookup.reason,
+  });
+
+  const finalHermes: HermesAutoReplyResult = {
+    ...hermesResult,
+    reply: autonomous.reply,
+    autoSendAllowed: autonomous.kind === 'auto_send' || autonomous.kind === 'clarifying_question' || autonomous.kind === 'receipt_and_alert',
+    needsHuman: false,
+    risk: autonomous.notifyHuman ? 'high' : hermesResult.risk,
+  };
+  const safety = evaluateAutoReplySafety({
+    policy,
+    route: autonomous.kind === 'receipt_and_alert' ? { ...route, risk: 'low', action: 'template' } : route,
+    hermes: finalHermes,
+    recentRoomReplyTimes,
+    now: new Date(),
+    safeModeEnabled: loadSafeModeConfig().enabled,
+  });
+
+  if (autonomous.notifyHuman) await notifyAutoReplyHuman(job, autonomous.humanReason || '사람 확인 필요', route.risk === 'high' ? 'critical' : 'warning');
+
+  const shouldSend = !dryRun && safety.allowed && process.env.AUTO_REPLY_ENABLE_SEND === 'true';
+  if (!shouldSend) {
+    updateAutoReplyJobPersisted(AUTO_REPLY_MEMORY_STORE, job.id, {
+      status: autonomous.notifyHuman ? 'blocked' : 'drafted',
+      draftReply: autonomous.reply,
+      blockReason: dryRun ? 'dry-run' : (safety.allowed ? 'AUTO_REPLY_ENABLE_SEND 꺼짐' : safety.reason),
+      category: route.category,
+      risk: autonomous.notifyHuman ? 'high' : finalHermes.risk,
+    });
+    return { status: autonomous.notifyHuman ? 'blocked' : 'drafted' };
+  }
+
+  try {
+    const sent = await sendGraytagChatMessage({ chatRoomUuid: job.chatRoomUuid, dealUsid: job.dealUsid, message: autonomous.reply });
+    updateAutoReplyJobPersisted(AUTO_REPLY_MEMORY_STORE, job.id, {
+      status: sent?.ok === false ? 'error' : 'sent',
+      draftReply: autonomous.reply,
+      blockReason: sent?.ok === false ? (sent.error || 'Graytag send failed') : undefined,
+      category: route.category,
+      risk: finalHermes.risk,
+    });
+    if (sent?.ok === false) await notifyAutoReplyHuman(job, `자동발송 실패: ${sent.error || 'unknown'}`, 'critical');
+    return { status: sent?.ok === false ? 'error' : 'sent' };
+  } catch (e: any) {
+    const reason = e?.message || '자동발송 예외';
+    updateAutoReplyJobPersisted(AUTO_REPLY_MEMORY_STORE, job.id, { status: 'error', draftReply: autonomous.reply, blockReason: reason });
+    await notifyAutoReplyHuman(job, `자동발송 실패: ${reason}`, 'critical');
+    return { status: 'error' };
+  }
+}
+
+const autoReplyLogHandler = (c: any) => {
+  AUTO_REPLY_MEMORY_STORE = loadAutoReplyJobStore(autoReplyJobsPath());
+  const limit = Math.max(1, Math.min(200, Number(c.req.query('limit') || 50)));
+  return c.json({ jobs: listAutoReplyJobs(AUTO_REPLY_MEMORY_STORE, limit), limit });
+};
+
+app.get('/chat/auto-reply-log', autoReplyLogHandler);
+app.get('/api/chat/auto-reply-log', autoReplyLogHandler);
+
+async function scanAutoReplyCandidates(maxRooms = 10): Promise<any[]> {
+  const cookies = loadSessionCookies();
+  if (!cookies) return [];
+  const cookieStr = buildCookieStr(cookies);
+  const headers = { ...BASE_HEADERS, Cookie: cookieStr, Referer: 'https://graytag.co.kr/lender/deal/listAfterUsing' };
+  const [afterResp, beforeResp] = await Promise.all([
+    rateLimitedFetch('https://graytag.co.kr/ws/lender/findAfterUsingLenderDeals?finishedDealIncluded=false&sorting=Latest&page=1&rows=50',
+      { headers, redirect: 'manual' }),
+    rateLimitedFetch('https://graytag.co.kr/ws/lender/findBeforeUsingLenderDeals?finishedDealIncluded=true&sorting=Latest&page=1&rows=50',
+      { headers: { ...headers, Referer: 'https://graytag.co.kr/lender/deal/listBeforeUsing' }, redirect: 'manual' }),
+  ]);
+  const afterR = afterResp.ok ? await safeJson(afterResp) : { data: null };
+  const beforeR = beforeResp.ok ? await safeJson(beforeResp) : { data: null };
+  const allDeals = [
+    ...(afterR.data?.data?.lenderDeals || afterR.data?.lenderDeals || []),
+    ...(beforeR.data?.data?.lenderDeals || beforeR.data?.lenderDeals || []),
+  ];
+  const seen = new Set<string>();
+  const candidates: any[] = [];
+  for (const deal of allDeals) {
+    if (candidates.length >= maxRooms) break;
+    if (!deal.chatRoomUuid || seen.has(deal.chatRoomUuid)) continue;
+    seen.add(deal.chatRoomUuid);
+    if (!(deal.lenderChatUnread || deal.dealDetail?.lenderChatUnread)) continue;
+    try {
+      const msgResp = await rateLimitedFetch(`https://graytag.co.kr/ws/chat/findChats?uuid=${deal.chatRoomUuid}&page=1`, {
+        headers: { ...headers, Referer: `https://graytag.co.kr/chat/${deal.chatRoomUuid}` },
+        redirect: 'manual',
+        signal: AbortSignal.timeout(2500),
+      });
+      if (!msgResp.ok) continue;
+      const msgData = await safeJson(msgResp);
+      const message = findLatestBuyerInquiryMessage(extractGraytagChats(msgData));
+      if (!message) continue;
+      const candidate = {
+        message: message.message || '',
+        registeredDateTime: message.registeredDateTime,
+        createdAt: message.createdAt,
+        updatedAt: message.updatedAt,
+        owned: message.owned,
+        isOwned: message.isOwned,
+        informationMessage: message.informationMessage,
+        isInfo: message.isInfo,
+        messageType: message.messageType,
+        chatRoomUuid: deal.chatRoomUuid,
+        dealUsid: deal.dealUsid,
+        buyerName: deal.borrowerName?.trim(),
+        productType: deal.productTypeString,
+        productName: deal.productName,
+        keepAcct: deal.keepAcct,
+      };
+      if (isBuyerTextMessage(candidate)) candidates.push(candidate);
+    } catch {}
+  }
+  return candidates;
+}
+
+const autoReplyTickHandler = async (c: any) => {
+  AUTO_REPLY_MEMORY_STORE = loadAutoReplyJobStore(autoReplyJobsPath());
+  const body = await c.req.json().catch(() => ({}));
+  const dryRun = body.dryRun !== false;
+  const candidates = Array.isArray(body.candidates) ? body.candidates : await scanAutoReplyCandidates(Math.max(1, Math.min(20, Number(body.maxRooms || 10))));
+  let newJobs = 0;
+  let queued = 0;
+  let drafted = 0;
+  let sent = 0;
+  let blocked = 0;
+  let errors = 0;
+  let skipped = 0;
+
+  for (const candidate of candidates) {
+    const text = normalizeBuyerMessage(candidate.message || '');
+    if (!candidate.chatRoomUuid || !text) continue;
+    const fingerprint = messageFingerprint({ ...candidate, message: text });
+    const existingJobId = AUTO_REPLY_MEMORY_STORE.fingerprintToJobId[fingerprint];
+    const job = createAutoReplyJob(AUTO_REPLY_MEMORY_STORE, {
+      fingerprint,
+      chatRoomUuid: candidate.chatRoomUuid,
+      dealUsid: candidate.dealUsid,
+      buyerName: candidate.buyerName,
+      productType: candidate.productType,
+      productName: candidate.productName,
+      keepAcct: candidate.keepAcct,
+      buyerMessage: text,
+      messageTime: messageTimestamp(candidate),
+    });
+    const isNewJob = !existingJobId;
+    if (isNewJob) {
+      newJobs += 1;
+      persistAutoReplyJobs();
+    } else if (job.status !== 'queued') {
+      skipped += 1;
+      continue;
+    }
+    try {
+      const result = await processAutoReplyJob(job, dryRun);
+      if (result.status === 'queued') queued += 1;
+      if (result.status === 'drafted') drafted += 1;
+      if (result.status === 'sent') sent += 1;
+      if (result.status === 'error') errors += 1;
+      if (result.status === 'blocked') blocked += 1;
+    } catch (e: any) {
+      errors += 1;
+      updateAutoReplyJobPersisted(AUTO_REPLY_MEMORY_STORE, job.id, { status: 'error', blockReason: e?.message || 'auto-reply error' });
+    }
+  }
+
+  return c.json({ ok: true, scannedRooms: candidates.length, newJobs, queued, drafted, sent, blocked, errors, skipped });
+};
+
+app.post('/chat/auto-reply/tick', autoReplyTickHandler);
+app.post('/api/chat/auto-reply/tick', autoReplyTickHandler);
 
 
 // ─── 상품 삭제 (OnSale 상태만) ────────────────────────────────
@@ -1317,7 +1692,6 @@ app.get('/ping', (c) => c.json({ ok: true }));
 // ─── Seller 통합 상태판 (읽기 전용, 민감값 제외) ───────────────
 const KNOWN_DEALS_PATH = '/home/ubuntu/.hermes/hermes-agent/graytag-aio-manager-0606/data/known-deals.json';
 const POLL_DAEMON_STATUS_PATH = '/home/ubuntu/.hermes/hermes-agent/graytag-aio-manager-0606/data/poll-daemon-status.json';
-const AUTO_REPLY_LOG_PATH = '/home/ubuntu/graytag-session/auto-reply-rest-api.log';
 
 function readJsonFile<T>(path: string): T | null {
   try {
@@ -1368,7 +1742,7 @@ function buildSellerStatus() {
   const lastUndercutterLog = undercutterLog[undercutterLog.length - 1];
 
   const autoReplyCfg = loadAutoReplyConfig();
-  const autoReplyLastLogAt = safeFileMtime(AUTO_REPLY_LOG_PATH);
+  const autoReplyLastLogAt = safeFileMtime(autoReplyJobsPath());
 
   const manualMembers = loadManualMembers().length;
 
@@ -1997,96 +2371,7 @@ app.post('/bulk-update-keepmemo', async (c) => {
   return c.json({ totalTargets: targets.length, updated, skipped, results });
 });
 
-// ─── AI 자동 응답 (PicoClaw / OpenAI) ──────────────────────
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
-
-const SYSTEM_PROMPT = `당신은 "그레이택(Graytag)" OTT 계정 공유 플랫폼의 파티장(계정 소유자) 측 고객 응대 AI 어시스턴트입니다.
-당신은 파티장이 파티원(고객)에게 보내는 메시지를 대신 생성합니다.
-
-## 서비스 개요
-- 그레이택은 넷플릭스, 디즈니+, 웨이브, 티빙, 왓챠 등 OTT 계정을 공유하는 파티 매칭 플랫폼
-- "파티장"이 계정을 등록 → "파티원"이 일정 금액을 내고 함께 사용
-- 파티원은 계정 정보(이메일/비밀번호)와 "전달 메모"를 통해 안내받음
-
-## 우리 운영 방식 (중요!)
-
-### 계정 구조
-- 하나의 OTT 계정(이메일)에 여러 파티원이 프로필을 나눠 사용
-- 비밀번호는 모든 계정 동일: 절대 채팅에 직접 알려주지 말 것 → "전달 메모를 확인해주세요"
-- 이메일은 SimpleLogin 기반 별칭 이메일 사용 (예: xxx@simplelogin.com)
-
-### 셀프인증 시스템 (email-verify.xyz)
-- 로그인 시 "이메일 인증 코드" 필요 → 파티원이 직접 확인 가능
-- 전달 메모에 안내된 URL: https://email-verify.xyz/email/mail/{ID}
-- 해당 사이트에서 핀번호 입력 후 인증 코드 확인 가능
-- 핀번호도 전달 메모에 적혀있음
-
-### 프로필 규칙
-- 프로필 이름: 본명에서 가운데 글자를 별(*)로 가림 (예: 홍*동)
-- 특수기호 불가 시 본명 그대로 사용
-- 기본 프로필이 1개만 있거나, 자리가 꽉 찼는데 기본 프로필이 있다면 → 그걸 수정해서 사용
-- 다른 사람 프로필 절대 사용/삭제 금지
-
-## 고객이 자주 하는 질문 & 모범 답변
-
-### 1. "로그인이 안 돼요" / "비밀번호가 틀려요"
-→ "전달 메모에 안내된 비밀번호를 다시 한번 확인해 주세요! 복사-붙여넣기 시 앞뒤 공백이 포함되지 않았는지 체크해 주세요 😊"
-→ 비밀번호를 직접 알려주지 말 것!
-
-### 2. "이메일 인증 코드가 왔어요" / "인증 코드 좀 알려주세요"
-→ "전달 메모에 안내된 셀프인증 사이트에서 직접 확인 가능합니다! 😊
-사이트 주소와 핀번호는 전달 메모에 있어요. 사이트에 접속하시면 인증 코드를 바로 확인하실 수 있습니다!"
-
-### 3. "프로필을 어떻게 만들어요?" / "프로필 설정"
-→ "프로필 추가 후, 이름을 본명에서 가운데 글자를 별(*)로 가려서 설정해 주세요! 예) 홍*동
-혹시 기본 프로필만 있다면 그걸 수정해서 사용하시면 됩니다 😊"
-
-### 4. "자리가 꽉 찼어요" / "프로필을 추가할 수 없어요"
-→ "혹시 기본 프로필(프로필1 등)이 보이시나요? 있다면 그 프로필을 수정해서 사용하시면 됩니다!
-그래도 안 되시면 말씀해 주세요, 확인해 드릴게요 😊"
-
-### 5. "다른 사람이 내 프로필을 써요" / "프로필이 바뀌었어요"
-→ "확인해 보겠습니다! 혹시 어떤 프로필을 사용하고 계셨는지 알려주시면 빠르게 처리해 드릴게요 😊"
-
-### 6. "연장하고 싶어요" / "기간 연장"
-→ "연장을 원하시면 현재 이용 종료 전에 말씀해 주시면 됩니다! 그레이택에서 연장 결제 후 자동으로 이어서 이용 가능합니다 😊"
-
-### 7. "해지하고 싶어요" / "중도 종료"
-→ "그레이택 사이트에서 직접 중도 해지 신청이 가능합니다. 잔여 기간에 대해 환불이 진행됩니다!
-그레이택 고객센터(1:1 문의)로 문의하시면 더 자세한 안내를 받으실 수 있어요 😊"
-
-### 8. "계정 정보를 다시 알려주세요" / "메모를 못 찾겠어요"
-→ "그레이택 사이트 → 내 이용내역에서 전달 메모를 다시 확인하실 수 있습니다!
-로그인 후 [마이페이지 → 이용 중인 파티]에서 확인해 보세요 😊"
-
-### 9. "TV에서 로그인하려는데 안 돼요" / "기기 추가"
-→ "TV에서 로그인 시에도 동일하게 이메일과 비밀번호를 입력하시면 됩니다!
-이메일 인증 코드가 필요하면 전달 메모의 셀프인증 사이트에서 확인해 주세요 😊"
-
-### 10. "화질이 안 좋아요" / "SD로만 나와요"
-→ "화질 설정은 각 OTT 앱의 설정에서 변경 가능합니다!
-혹시 계정 요금제 문제라면 확인해 보겠습니다 😊"
-
-### 11. "언제부터 이용 가능해요?" / "전달이 안 됐어요"
-→ "전달이 완료되면 그레이택에서 알림이 갑니다! 전달 메모에 계정 정보가 안내되어 있으니 확인해 주세요.
-아직 전달이 안 됐다면 조금만 기다려 주세요 😊"
-
-### 12. "감사합니다" / "고마워요" / 인사
-→ "즐거운 시청 되세요! 문의 사항 있으시면 언제든 편하게 말씀해 주세요 😊"
-
-### 13. "넵" / "네" / "확인했습니다" / 단순 확인
-→ "감사합니다! 즐거운 시청 되세요 😊"
-
-## 응답 원칙
-1. 한국어로 답변
-2. 파티장 입장에서 파티원에게 보내는 메시지 톤 (친절하고 간결)
-3. 이모지 적절히 사용
-4. 절대 비밀번호를 직접 알려주지 않음 → "전달 메모를 확인해 주세요"
-5. 셀프인증 관련 → email-verify.xyz 사이트 안내 (전달 메모에 URL+핀번호 있음)
-6. 모르는 질문 → "그레이택 고객센터(1:1 문의)로 문의해 주세요"
-7. 짧고 핵심만 (2~4줄 이내)
-8. 파티원이 화났을 때 → 먼저 사과하고 해결책 제시`;
-
+// ─── Hermes Agent 수동 답변 초안 ─────────────────────────────
 app.post('/chat/ai-reply', async (c) => {
   const { messages, productType } = await c.req.json() as any;
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
@@ -2094,63 +2379,21 @@ app.post('/chat/ai-reply', async (c) => {
   }
 
   try {
-    // 최근 메시지 10개만 사용
-    const recentMsgs = messages.slice(-10).map((m: any) => ({
-      role: m.isOwned ? 'assistant' : 'user',
-      content: m.message || '',
-    }));
-
-    const systemMsg = SYSTEM_PROMPT;
-
-    // 빈 응답 방지: 최대 2회 재시도
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const resp = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${OPENAI_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model: 'gpt-4o-mini',
-          messages: [
-            { role: 'system', content: systemMsg },
-            ...recentMsgs,
-          ],
-          max_tokens: 800,
-        }),
+    if (process.env.AUTO_REPLY_USE_HERMES === 'false') {
+      return c.json({
+        reply: '불편드려 죄송합니다. 확인 후 바로 안내드리겠습니다.',
+        model: 'hermes-disabled-safe-fallback',
+        reason: 'Hermes Agent 호출이 비활성화되어 안전 초안을 반환했습니다.',
       });
-
-      const data = await resp.json() as any;
-      if (!resp.ok) {
-        return c.json({ error: data.error?.message || 'OpenAI API 오류' }, 500);
-      }
-
-      const reply = (data.choices?.[0]?.message?.content || '').trim();
-      if (reply) {
-        return c.json({ reply, model: data.model, usage: data.usage });
-      }
-      // 빈 응답 → 재시도 (짧은 딜레이)
-      console.log(`[AI-Reply] 빈 응답 (attempt ${attempt + 1}/3), 재시도...`);
-      await new Promise(r => setTimeout(r, 1000));
     }
-
-    return c.json({ reply: '', error: '3회 시도 후에도 빈 응답' }, 200);
+    const cfg = loadAutoReplyRuntimeConfig();
+    const prompt = buildHermesManualReplyPrompt({ messages, productType, systemPrompt: cfg.systemPrompt });
+    const stdout = await runHermesJsonPrompt(prompt);
+    const parsed = parseHermesManualReplyJson(stdout);
+    return c.json({ reply: parsed.reply, model: 'hermes-agent', reason: parsed.reason });
   } catch (e: any) {
-    return c.json({ error: e.message }, 500);
+    return c.json({ error: e.message || 'Hermes Agent 응답 생성 실패' }, 500);
   }
-});
-
-// ─── PicoClaw 자동 응답 로그 조회 ──────────────────────────────
-// 로그는 server.ts의 autoReplyLog에 있지만, 여기서는 /tmp/picoclaw.log 파일로 조회
-app.get('/chat/auto-reply-log', async (c) => {
-  try {
-    const { readFileSync, existsSync } = await import('fs');
-    const logPath = '/home/ubuntu/graytag-session/auto-reply-rest-api.log';
-    if (!existsSync(logPath)) return c.json({ logs: [], message: '아직 로그 없음' });
-    const content = readFileSync(logPath, 'utf-8');
-    const logs = content.trim().split('\n').filter(Boolean).slice(-50);
-    return c.json({ logs, count: logs.length });
-  } catch (e: any) { return c.json({ logs: [], error: e.message }); }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3044,7 +3287,10 @@ app.post('/feedback-settings', async (c) => {
 // AUTO REPLY CONFIG: 자동응답 설정 관리
 // ─────────────────────────────────────────────────────────────────────────────
 
-const AUTO_REPLY_CONFIG_PATH = "/home/ubuntu/graytag-session/auto-reply-config.json";
+const DEFAULT_AUTO_REPLY_CONFIG_PATH = "/home/ubuntu/graytag-session/auto-reply-config.json";
+function autoReplyConfigPath(): string {
+  return process.env.AUTO_REPLY_CONFIG_PATH || DEFAULT_AUTO_REPLY_CONFIG_PATH;
+}
 
 interface AutoReplyConfig {
   enabled: boolean;
@@ -3056,14 +3302,17 @@ function loadAutoReplyConfig(): AutoReplyConfig {
   const defaults: AutoReplyConfig = { enabled: true, systemPrompt: "", delaySeconds: 0 };
   try {
 
-    if (!existsSync(AUTO_REPLY_CONFIG_PATH)) return defaults;
-    return { ...defaults, ...JSON.parse(readFileSync(AUTO_REPLY_CONFIG_PATH, "utf-8")) };
+    if (!existsSync(autoReplyConfigPath())) return defaults;
+    return { ...defaults, ...JSON.parse(readFileSync(autoReplyConfigPath(), "utf-8")) };
   } catch { return defaults; }
 }
 
 function saveAutoReplyConfig(cfg: AutoReplyConfig): void {
 
-  writeFileSync(AUTO_REPLY_CONFIG_PATH, JSON.stringify(cfg, null, 2));
+  const path = autoReplyConfigPath();
+  const dir = path.replace(/\/[^/]+$/, '');
+  if (dir && dir !== path && !existsSync(dir)) mkdirSync(dir, { recursive: true });
+  writeFileSync(path, JSON.stringify(cfg, null, 2));
 }
 
 // GET /chat/auto-reply/state

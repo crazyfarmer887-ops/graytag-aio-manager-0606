@@ -7,6 +7,7 @@ import apiApp from './src/api/index.ts';
 import { scheduleAutoSync } from './src/scheduler/auto-sync.ts';
 import { startUndercutterScheduler } from './src/scheduler/undercutter.ts';
 import { startPollDaemon } from './src/scheduler/poll-daemon.ts';
+import { startAutoReplyDaemon } from './src/scheduler/auto-reply-daemon.ts';
 
 const distDir = resolve(process.cwd(), 'dist/client');
 
@@ -71,3 +72,4 @@ console.log(`GrayTag local server running at http://localhost:${port}`);
 scheduleAutoSync(port);
 startUndercutterScheduler(port);
 startPollDaemon();
+startAutoReplyDaemon(port);

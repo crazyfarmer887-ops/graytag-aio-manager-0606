@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { MessageCircle, RefreshCw, Loader2, Send, ChevronLeft, ArrowDown, Sparkles, ChevronDown, Bell, Settings, ToggleLeft, ToggleRight } from "lucide-react";
+import { autoReplyStatusLabel, autoReplyStatusTone, summarizeAutoReplyJobs, type AutoReplyLogJob } from "../lib/auto-reply-log";
 
 interface ChatRoom {
   dealUsid: string; chatRoomUuid: string; borrowerName: string;
@@ -54,6 +55,8 @@ export default function ChatPage() {
   const [arPrompt, setArPrompt] = useState<string>("");
   const [arPromptOpen, setArPromptOpen] = useState<boolean>(false);
   const [arLogs, setArLogs] = useState<string[]>([]);
+  const [arJobs, setArJobs] = useState<AutoReplyLogJob[]>([]);
+  const [arLogLoading, setArLogLoading] = useState<boolean>(false);
   const [arSaving, setArSaving] = useState<boolean>(false);
   const [arPanel, setArPanel] = useState<boolean>(false);
   // 공지 state
@@ -72,6 +75,18 @@ export default function ChatPage() {
   }, []);
 
   // 채팅방 목록 로드
+  const loadAutoReplyLog = useCallback(async () => {
+    setArLogLoading(true);
+    try {
+      const res = await fetch('/api/chat/auto-reply-log?limit=20');
+      if (!res.ok) return;
+      const data = await res.json();
+      setArJobs(data.jobs || []);
+      setArLogs((data.logs || []).slice(-3));
+    } catch {}
+    finally { setArLogLoading(false); }
+  }, []);
+
   const loadRooms = useCallback(async () => {
     setLoading(true); setError(null);
     try {
@@ -112,7 +127,7 @@ export default function ChatPage() {
         ]);
         if (sr.ok) { const d = await sr.json(); setArEnabled(d.enabled); setArDelay(d.delaySeconds ?? 0); }
         if (pr.ok) { const d = await pr.json(); setArPrompt(d.systemPrompt ?? ""); }
-        if (lr.ok) { const d = await lr.json(); setArLogs((d.logs || []).slice(-3)); }
+        if (lr.ok) { const d = await lr.json(); setArJobs(d.jobs || []); setArLogs((d.logs || []).slice(-3)); }
       } catch {}
     })();
   }, [loadRooms]);
@@ -268,12 +283,14 @@ export default function ChatPage() {
 
   // ── 패널 렌더러 ─────────────────────────────────────────────
 
-  const renderArPanel = () => (
+  const renderArPanel = () => {
+    const arSummary = summarizeAutoReplyJobs(arJobs);
+    return (
     <div style={{background:"#F5F3FF", borderBottom:"1px solid #DDD6FE", padding:"14px 18px"}}>
       <div style={{display:"flex",alignItems:"center",gap:8}}>
         <Settings size={14} color="#7C3AED"/>
         <span style={{fontWeight:700,color:"#1E1B4B",fontSize:13,flex:1}}>자동응답</span>
-        <button onClick={toggleAr} style={{background:"none",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:4,
+        <button onClick={toggleAr} style={{border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:4,
           color:arEnabled?"#7C3AED":"#9CA3AF",fontSize:12,fontWeight:700,padding:"2px 6px",borderRadius:6,
           background:arEnabled?"#EDE9FE":"#F3F4F6"} as any}>
           {arEnabled?<ToggleRight size={18} color="#7C3AED"/>:<ToggleLeft size={18} color="#9CA3AF"/>}
@@ -306,6 +323,35 @@ export default function ChatPage() {
               </button>
             </>}
           </div>
+          <div style={{background:"#fff",border:"1px solid #DDD6FE",borderRadius:10,padding:"10px 12px"}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+              <span style={{fontSize:12,fontWeight:700,color:"#1E1B4B"}}>자동응답 큐</span>
+              <button onClick={loadAutoReplyLog} disabled={arLogLoading} style={{background:"#EDE9FE",border:"none",borderRadius:7,padding:"4px 8px",fontSize:11,fontWeight:700,color:"#7C3AED",cursor:"pointer"}}>
+                {arLogLoading?"새로고침 중":"새로고침"}
+              </button>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:6,marginBottom:8}}>
+              <div style={{background:"#F5F3FF",borderRadius:8,padding:6,textAlign:"center"}}><div style={{fontSize:15,fontWeight:800,color:"#7C3AED"}}>{arSummary.drafted}</div><div style={{fontSize:10,color:"#6B7280"}}>초안</div></div>
+              <div style={{background:"#FFF7ED",borderRadius:8,padding:6,textAlign:"center"}}><div style={{fontSize:15,fontWeight:800,color:"#C2410C"}}>{arSummary.blocked}</div><div style={{fontSize:10,color:"#6B7280"}}>확인</div></div>
+              <div style={{background:"#ECFDF5",borderRadius:8,padding:6,textAlign:"center"}}><div style={{fontSize:15,fontWeight:800,color:"#047857"}}>{arSummary.sent}</div><div style={{fontSize:10,color:"#6B7280"}}>발송</div></div>
+              <div style={{background:"#FEF2F2",borderRadius:8,padding:6,textAlign:"center"}}><div style={{fontSize:15,fontWeight:800,color:"#B91C1C"}}>{arSummary.error}</div><div style={{fontSize:10,color:"#6B7280"}}>오류</div></div>
+            </div>
+            {arJobs.length===0 ? (
+              <div style={{fontSize:11,color:"#9CA3AF",padding:"8px 0",textAlign:"center"}}>자동응답 작업 없음</div>
+            ) : arJobs.slice(0,5).map(job=>{
+              const tone=autoReplyStatusTone(job.status);
+              return <div key={job.id} style={{borderTop:"1px solid #F3F0FF",padding:"8px 0"}}>
+                <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                  <span style={{fontSize:10,fontWeight:800,borderRadius:999,padding:"2px 6px",background:tone.background,color:tone.color}}>{autoReplyStatusLabel(job.status)}</span>
+                  <span style={{fontSize:11,fontWeight:700,color:"#1E1B4B",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{job.buyerName||'구매자'} · {job.productType||'기타'}</span>
+                </div>
+                <div style={{fontSize:11,color:"#6B7280",lineHeight:1.45,wordBreak:"break-word"}}>문의: {(job.buyerMessage||'').slice(0,80)}</div>
+                {job.draftReply&&<div style={{fontSize:11,color:"#7C3AED",lineHeight:1.45,wordBreak:"break-word",marginTop:3}}>초안: {job.draftReply.slice(0,100)}</div>}
+                {job.draftReply&&<button onClick={()=>{ const room=rooms.find(r=>r.chatRoomUuid===job.chatRoomUuid); if(room) selectRoom(room); setSendText(job.draftReply||''); }} style={{marginTop:6,background:"#7C3AED",color:"#fff",border:"none",borderRadius:7,padding:"5px 8px",fontSize:11,fontWeight:700,cursor:"pointer"}}>초안 입력</button>}
+                {job.blockReason&&<div style={{fontSize:10,color:"#9CA3AF",marginTop:3}}>사유: {job.blockReason}</div>}
+              </div>;
+            })}
+          </div>
           {arLogs.length>0&&(
             <div style={{background:"#1E1B4B",borderRadius:8,padding:"8px 10px"}}>
               <div style={{fontSize:10,color:"#7C3AED",marginBottom:4,fontWeight:600}}>최근 로그</div>
@@ -315,7 +361,8 @@ export default function ChatPage() {
         </div>
       )}
     </div>
-  );
+    );
+  };
 
   const renderNoticePanel = () => (
     <div style={{background:"#FFF7ED",borderBottom:"1px solid #FED7AA",padding:"14px 18px"}}>
