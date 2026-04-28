@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { buildPartyMaintenanceChecklistItems, mergePartyMaintenanceChecklistState, partyMaintenanceChecklistKey } from '../src/lib/party-maintenance-checklist';
+import { buildPartyMaintenanceChecklistItems, generateMaintenancePassword, mergePartyMaintenanceChecklistState, partyMaintenanceChecklistKey } from '../src/lib/party-maintenance-checklist';
 
 const targets = [
   {
@@ -19,6 +19,17 @@ const targets = [
 ];
 
 describe('party maintenance checklist', () => {
+  test('generates a 12 character password that starts lowercase and mixes digits with !/@ symbols', () => {
+    const values = [0.0, 0.1, 0.5, 0.9, 0.2, 0.7, 0.3, 0.8, 0.4, 0.6, 0.11, 0.91, 0.21, 0.71, 0.31, 0.81];
+    let i = 0;
+    const password = generateMaintenancePassword(() => values[i++ % values.length]);
+    expect(password).toHaveLength(12);
+    expect(password).toMatch(/^[a-z]/);
+    expect(password).toMatch(/[0-9]/);
+    expect(password).toMatch(/[!@]/);
+    expect(password).toMatch(/^[a-z][a-z0-9!@]{11}$/);
+  });
+
   test('creates stable account-level keys and default Y/N state', () => {
     expect(partyMaintenanceChecklistKey(targets[0])).toBe('넷플릭스:empty@example.com');
     const [item] = buildPartyMaintenanceChecklistItems(targets, {});

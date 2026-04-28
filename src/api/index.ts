@@ -8,7 +8,7 @@ import { sendSellerAlert } from '../alerts/telegram';
 import { appendAuditLog, auditRequestId, readAuditLog } from './audit-log';
 import { assertPriceChangeAllowed, loadPriceSafetyConfig, previewPriceChange, recordSuccessfulPriceDecrease, savePriceSafetyConfig } from './price-safety';
 import { loadSafeModeConfig, saveSafeModeConfig } from './safe-mode';
-import { generateSixDigitPin, resolveEmailAliasFill, updateEmailAliasPin } from './email-alias-fill';
+import { generateSixDigitPin, resolveEmailAliasFill, updateEmailAliasPin, verifyEmailAliasPinUpdate } from './email-alias-fill';
 import { buildFinishedDealsUrl } from '../lib/graytag-fill';
 import { planUndercutterPriceChange } from '../lib/undercutter-price';
 import { DEFAULT_MANAGEMENT_CACHE_TTL_MS, isAutoSessionManagementRequest, managementCache, shouldForceManagementRefresh } from './management-cache';
@@ -2934,15 +2934,17 @@ app.post('/party-maintenance-checklists/:key/pin/regenerate', async (c) => {
     const updatedAt = new Date().toISOString();
     const emailResult = await updateEmailAliasPin({ accountEmail, serviceType, aliases, pin }, updatedAt);
     if (!emailResult.ok) return c.json({ ok: false, error: emailResult.message || 'email dashboard PIN update failed' }, 404);
+    const verifyResult = verifyEmailAliasPinUpdate(emailResult.emailId!, pin);
+    if (!verifyResult.ok) return c.json({ ok: false, error: verifyResult.message || 'PIN update verification failed' }, 500);
     const store = mergePartyMaintenanceChecklistState(loadPartyMaintenanceChecklistStore(), key, {
       recruitAgain: true,
       pinStillUnchanged: false,
       generatedPin: pin,
       generatedPinAliasId: emailResult.emailId,
-      generatedPinAt: updatedAt,
+      generatedPinAt: verifyResult.updatedAt || updatedAt,
     }, 'dashboard', updatedAt);
     savePartyMaintenanceChecklistStore(store);
-    return c.json({ ok: true, pin, emailId: emailResult.emailId, email: emailResult.email, item: store[key], store });
+    return c.json({ ok: true, verified: true, pin, emailId: emailResult.emailId, email: emailResult.email, item: store[key], store });
   } catch (e: any) {
     return c.json({ ok: false, error: e.message || 'PIN regeneration failed' }, 500);
   }

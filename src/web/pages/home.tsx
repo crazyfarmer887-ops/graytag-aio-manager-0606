@@ -5,7 +5,7 @@ import { useLocation } from "wouter";
 import { CATEGORIES } from "../lib/constants";
 import { buildPartyMaintenanceTargets, buildServiceStats, type PartyMaintenanceTarget } from "../lib/dashboard-stats";
 import { buildChatAlerts, buildUnreadChatAlerts, type ChatAlertItem, type ChatAlertRoom } from "../lib/chat-alerts";
-import { buildPartyMaintenanceChecklistItems, mergePartyMaintenanceChecklistState, type PartyMaintenanceChecklistItem, type PartyMaintenanceChecklistState, type PartyMaintenanceChecklistStore } from "../../lib/party-maintenance-checklist";
+import { buildPartyMaintenanceChecklistItems, generateMaintenancePassword, mergePartyMaintenanceChecklistState, type PartyMaintenanceChecklistItem, type PartyMaintenanceChecklistState, type PartyMaintenanceChecklistStore } from "../../lib/party-maintenance-checklist";
 import { RefreshCw, ChevronRight, User, Loader2, TrendingUp, TrendingDown, Wallet, CheckCircle2, RotateCcw, Settings, Zap, ShieldAlert, Bell, MessageCircle } from "lucide-react";
 import { Card, StatCard } from "../components/ui/card";
 import { StatusBadge } from "../components/ui/status-badge";
@@ -644,31 +644,41 @@ function PartyMaintenancePanel({ items, regeneratingPinKey, onUpdate, onRegenera
                     )}
                     <ChecklistRow label="기존 파티원 프로필을 제거했는가" value={item.profileRemoved} onChange={(value) => onUpdate(item.key, { profileRemoved: value })} />
                     <ChecklistRow label="모든 기기에서 로그아웃했는가" value={item.devicesLoggedOut} onChange={(value) => onUpdate(item.key, { devicesLoggedOut: value })} />
-                    <ChecklistRow label="비밀번호를 변경했는가" value={item.passwordChanged} onChange={(value) => onUpdate(item.key, { passwordChanged: value })} />
-                    {item.passwordChanged === true && (
-                      <div style={{ background: '#EEF2FF', border: '1px solid #C7D2FE', borderRadius: 9, padding: '7px 8px' }}>
-                        <label style={{ display: 'block', fontSize: 10, color: '#4338CA', fontWeight: 900, marginBottom: 5 }}>변경된 비밀번호</label>
-                        <input
-                          type="text"
-                          value={item.changedPassword}
-                          placeholder="변경한 비밀번호 입력"
-                          onChange={(event) => onUpdate(item.key, { changedPassword: event.target.value })}
-                          style={{ width: '100%', boxSizing: 'border-box', border: '1px solid #C7D2FE', borderRadius: 8, padding: '7px 9px', fontSize: 11, color: '#312E81', fontWeight: 700, outline: 'none', fontFamily: 'inherit', background: '#fff' }}
-                        />
+                    <div style={{ background: '#EEF2FF', border: '1px solid #C7D2FE', borderRadius: 9, padding: '7px 8px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                        <span style={{ fontSize: 10, color: '#4338CA', fontWeight: 900 }}>비밀번호 변경 준비</span>
+                        <button onClick={() => onUpdate(item.key, { passwordChanged: true, changedPassword: generateMaintenancePassword() })} style={{ border: 'none', borderRadius: 8, padding: '6px 9px', background: '#4F46E5', color: '#fff', fontSize: 10, fontWeight: 900, cursor: 'pointer', fontFamily: 'inherit' }}>
+                          랜덤 12자리 비밀번호 생성
+                        </button>
                       </div>
+                      {item.changedPassword && <div style={{ fontSize: 11, color: '#312E81', fontWeight: 900, marginBottom: 6, letterSpacing: 0.5 }}>변경 예정 비밀번호: {item.changedPassword}</div>}
+                      <ChecklistRow label="비밀번호를 변경했는가" value={item.passwordChanged} onChange={(value) => onUpdate(item.key, { passwordChanged: value })} />
+                    </div>
+                    {item.passwordChanged === true && !item.changedPassword.trim() && (
+                      <div style={{ fontSize: 10, color: '#DC2626', fontWeight: 800, padding: '0 2px' }}>먼저 랜덤 비밀번호를 만들거나 변경된 비밀번호를 입력해주세요.</div>
                     )}
-                    <ChecklistRow label="PIN 번호를 아직 변경 안했는가" value={item.pinStillUnchanged} onChange={(value) => onUpdate(item.key, { pinStillUnchanged: value })} />
-                    {item.pinStillUnchanged === true && (
-                      <div style={{ background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 9, padding: '7px 8px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                          <span style={{ fontSize: 10, color: '#C2410C', fontWeight: 900 }}>Email Dashboard PIN</span>
-                          <button onClick={() => onRegeneratePin(item)} disabled={regeneratingPinKey === item.key} style={{ border: 'none', borderRadius: 8, padding: '6px 9px', background: '#F97316', color: '#fff', fontSize: 10, fontWeight: 900, cursor: regeneratingPinKey === item.key ? 'not-allowed' : 'pointer', fontFamily: 'inherit', opacity: regeneratingPinKey === item.key ? 0.65 : 1 }}>
-                            {regeneratingPinKey === item.key ? '생성중...' : '랜덤 6자리 PIN 재생성'}
-                          </button>
+                    <div style={{ background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 9, padding: '7px 8px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                        <span style={{ fontSize: 10, color: '#C2410C', fontWeight: 900 }}>Email Dashboard PIN</span>
+                        <button onClick={() => onRegeneratePin(item)} disabled={regeneratingPinKey === item.key} style={{ border: 'none', borderRadius: 8, padding: '6px 9px', background: '#F97316', color: '#fff', fontSize: 10, fontWeight: 900, cursor: regeneratingPinKey === item.key ? 'not-allowed' : 'pointer', fontFamily: 'inherit', opacity: regeneratingPinKey === item.key ? 0.65 : 1 }}>
+                          {regeneratingPinKey === item.key ? '변경 확인중...' : '랜덤 6자리 PIN 변경'}
+                        </button>
+                      </div>
+                      {item.generatedPin && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 6 }}>
+                          <div style={{ fontSize: 11, color: '#9A3412', fontWeight: 900 }}>변경된 PIN: {item.generatedPin}</div>
+                          <div style={{ fontSize: 10, color: '#059669', fontWeight: 900 }}>PIN 변경 확인됨 · Email #{item.generatedPinAliasId || '-'}</div>
+                          {item.generatedPinAliasId && <button onClick={() => window.open(`https://email-verify.xyz/email/mail/${item.generatedPinAliasId}`, '_blank', 'noopener,noreferrer')} style={{ alignSelf: 'flex-start', border: 'none', borderRadius: 8, padding: '5px 8px', background: '#FFEDD5', color: '#C2410C', fontSize: 10, fontWeight: 900, cursor: 'pointer', fontFamily: 'inherit' }}>이메일 새탭 열기</button>}
                         </div>
-                        {item.generatedPin && <div style={{ fontSize: 11, color: '#9A3412', fontWeight: 900, marginTop: 6 }}>새 PIN: {item.generatedPin}</div>}
+                      )}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, background: '#fff', borderRadius: 9, padding: '6px 7px' }}>
+                        <span style={{ fontSize: 10, color: '#4B5563', fontWeight: 800 }}>PIN 번호를 변경했는가</span>
+                        <span style={{ display: 'flex', gap: 4 }}>
+                          <ChoiceButton label="Y" active={item.pinStillUnchanged === false} onClick={() => onUpdate(item.key, { pinStillUnchanged: false })} tone="green" />
+                          <ChoiceButton label="N" active={item.pinStillUnchanged === true} onClick={() => onUpdate(item.key, { pinStillUnchanged: true })} tone="red" />
+                        </span>
                       </div>
-                    )}
+                    </div>
                   </div>
                 )}
                 {item.recruitAgain === false && (

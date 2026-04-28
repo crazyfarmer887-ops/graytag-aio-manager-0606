@@ -38,9 +38,12 @@ test('OTT home and navigation use the refreshed UI structure', () => {
   assert.match(home, /기존 구독이 유지됐는가/);
   assert.match(home, /구독 결제일은 매달 몇일인가/);
   assert.match(home, /subscriptionBillingDay/);
-  assert.match(home, /변경된 비밀번호/);
-  assert.match(home, /PIN 번호를 아직 변경 안했는가/);
-  assert.match(home, /랜덤 6자리 PIN 재생성/);
+  assert.match(home, /랜덤 12자리 비밀번호 생성/);
+  assert.match(home, /변경 예정 비밀번호/);
+  assert.match(home, /PIN 번호를 변경했는가/);
+  assert.match(home, /변경된 PIN/);
+  assert.match(home, /PIN 변경 확인됨/);
+  assert.match(home, /이메일 새탭 열기/);
   assert.match(home, /기존 파티원 프로필을 제거했는가/);
   assert.match(home, /구독을 해지했는가/);
   assert.match(home, /party-maintenance-checklists/);

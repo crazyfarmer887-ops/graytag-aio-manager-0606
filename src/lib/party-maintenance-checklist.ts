@@ -6,6 +6,23 @@ export interface PartyMaintenanceTargetLike {
   accountEmail: string;
 }
 
+const LOWERCASE = 'abcdefghijklmnopqrstuvwxyz';
+const DIGITS = '0123456789';
+const PASSWORD_SYMBOLS = '!@';
+const PASSWORD_TAIL = `${LOWERCASE}${DIGITS}${PASSWORD_SYMBOLS}`;
+
+function pickChar(chars: string, random: () => number): string {
+  return chars[Math.min(chars.length - 1, Math.floor(random() * chars.length))] || chars[0];
+}
+
+export function generateMaintenancePassword(random = Math.random): string {
+  const chars = Array.from({ length: 12 }, (_, index) => index === 0 ? pickChar(LOWERCASE, random) : pickChar(PASSWORD_TAIL, random));
+  chars[5] = pickChar(DIGITS, random);
+  chars[8] = '!';
+  chars[10] = '@';
+  return chars.join('');
+}
+
 export interface PartyMaintenanceChecklistState {
   key: string;
   recruitAgain: MaintenanceChecklistAnswer;

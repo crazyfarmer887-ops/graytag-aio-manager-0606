@@ -76,6 +76,20 @@ export function generateSixDigitPin(random = Math.random): string {
   return String(Math.floor(random() * 1_000_000)).padStart(6, '0');
 }
 
+export function verifyEmailAliasPinUpdate(emailId: number | string, expectedPin: string): { ok: boolean; emailId: number | string; pin: string | null; updatedAt?: string; message?: string } {
+  const pin = normalizeSixDigitPin(expectedPin);
+  if (!pin) return { ok: false, emailId, pin: null, message: 'PIN은 6자리 숫자여야 해요.' };
+  const record = loadAliasPinStore()[String(emailId)];
+  const currentPin = record?.pin?.trim() || null;
+  return {
+    ok: currentPin === pin,
+    emailId,
+    pin: currentPin,
+    updatedAt: record?.updatedAt,
+    ...(currentPin === pin ? {} : { message: '저장된 PIN이 요청한 PIN과 일치하지 않아요.' }),
+  };
+}
+
 export async function updateEmailAliasPin(input: {
   accountEmail: string;
   serviceType: string;
