@@ -692,6 +692,7 @@ function PartyMaintenancePanel({ items, regeneratingPinKey, onUpdate, onRegenera
                           </span>
                         </div>
                       </div>
+                      <ChecklistRow label="파티 재시작 했는가" value={item.partyRestarted} onChange={(value) => onUpdate(item.key, { partyRestarted: value })} />
                     </div>
                   )}
                   {item.recruitAgain === false && (
@@ -728,7 +729,7 @@ function PartyMaintenancePanel({ items, regeneratingPinKey, onUpdate, onRegenera
                       {target.accountEmail} · 최근 {target.lastMemberName || '없음'} · {target.usingCount}/{target.totalSlots}
                     </div>
                   </div>
-                  <button onClick={() => onUpdate(item.key, { recruitAgain: null })} style={{ border: 'none', borderRadius: 9, padding: '6px 8px', background: '#F3F4F6', color: '#6B7280', fontSize: 10, fontWeight: 900, cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0 }}>대상 복귀</button>
+                  <button onClick={() => onUpdate(item.key, { partyRestarted: null })} style={{ border: 'none', borderRadius: 9, padding: '6px 8px', background: '#F3F4F6', color: '#6B7280', fontSize: 10, fontWeight: 900, cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0 }}>대상 복귀</button>
                 </div>
               </div>
             );

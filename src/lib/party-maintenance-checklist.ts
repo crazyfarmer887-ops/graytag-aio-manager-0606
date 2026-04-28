@@ -37,6 +37,7 @@ export interface PartyMaintenanceChecklistState {
   subscriptionKept: MaintenanceChecklistAnswer;
   subscriptionBillingDay: string;
   subscriptionCancelled: MaintenanceChecklistAnswer;
+  partyRestarted: MaintenanceChecklistAnswer;
   note: string;
   updatedAt: string;
   updatedBy: string;
@@ -63,6 +64,7 @@ const DEFAULT_STATE = {
   subscriptionKept: null,
   subscriptionBillingDay: '',
   subscriptionCancelled: null,
+  partyRestarted: null,
   note: '',
 };
 
@@ -105,7 +107,7 @@ export function mergePartyMaintenanceChecklistState(
 ): PartyMaintenanceChecklistStore {
   const current = { ...createDefaultPartyMaintenanceChecklistState(key), ...(store[key] || {}), key };
   const next: PartyMaintenanceChecklistState = { ...current, key };
-  for (const field of ['recruitAgain', 'profileRemoved', 'devicesLoggedOut', 'passwordChanged', 'pinStillUnchanged', 'subscriptionKept', 'subscriptionCancelled'] as const) {
+  for (const field of ['recruitAgain', 'profileRemoved', 'devicesLoggedOut', 'passwordChanged', 'pinStillUnchanged', 'subscriptionKept', 'subscriptionCancelled', 'partyRestarted'] as const) {
     const value = normalizeNullableBoolean(patch[field]);
     if (value !== undefined) next[field] = value;
   }
@@ -138,6 +140,9 @@ export function mergePartyMaintenanceChecklistState(
     next.generatedPinAt = '';
     next.subscriptionKept = null;
     next.subscriptionBillingDay = '';
+    next.partyRestarted = null;
+  } else {
+    next.partyRestarted = null;
   }
 
   next.updatedAt = now;
@@ -182,7 +187,8 @@ function nextActionFor(state: PartyMaintenanceChecklistState): string {
   if (state.passwordChanged === true && !state.changedPassword.trim()) return '변경된 비밀번호 입력';
   if (state.pinStillUnchanged === null) return 'PIN 변경 여부 확인';
   if (state.pinStillUnchanged === true && !state.generatedPin.trim()) return '랜덤 PIN 재생성';
-  return '재모집 준비 완료';
+  if (state.partyRestarted !== true) return '파티 재시작 여부 확인';
+  return '파티 재시작 완료';
 }
 
 export function buildPartyMaintenanceChecklistItems<T extends PartyMaintenanceTargetLike>(
@@ -206,7 +212,7 @@ export function splitPartyMaintenanceChecklistItems<T extends PartyMaintenanceTa
   items: Array<PartyMaintenanceChecklistItem<T>>,
 ): { active: Array<PartyMaintenanceChecklistItem<T>>; completed: Array<PartyMaintenanceChecklistItem<T>> } {
   return items.reduce<{ active: Array<PartyMaintenanceChecklistItem<T>>; completed: Array<PartyMaintenanceChecklistItem<T>> }>((acc, item) => {
-    if (item.recruitAgain === true) acc.completed.push(item);
+    if (item.partyRestarted === true) acc.completed.push(item);
     else acc.active.push(item);
     return acc;
   }, { active: [], completed: [] });

@@ -45,6 +45,7 @@ describe('party maintenance checklist', () => {
       subscriptionKept: null,
       subscriptionBillingDay: '',
       subscriptionCancelled: null,
+      partyRestarted: null,
       progress: { done: 0, total: 1 },
       nextAction: '재모집 여부 선택',
     });
@@ -73,7 +74,7 @@ describe('party maintenance checklist', () => {
     expect(item.generatedPin).toBe('123456');
     expect(item.generatedPinAliasId).toBe(777);
     expect(item.progress).toEqual({ done: 9, total: 9 });
-    expect(item.nextAction).toBe('재모집 준비 완료');
+    expect(item.nextAction).toBe('파티 재시작 여부 확인');
   });
 
   test('Y branch requires billing day and changed password when their Y answers are selected', () => {
@@ -119,13 +120,19 @@ describe('party maintenance checklist', () => {
     expect(item.nextAction).toBe('구독 해지 여부 확인');
   });
 
-  test('splits restarted YES items into completed maintenance targets', () => {
+  test('keeps recruit-again YES items active until party restart is confirmed', () => {
     const key = partyMaintenanceChecklistKey(targets[0]);
-    const store = mergePartyMaintenanceChecklistState({}, key, { recruitAgain: true }, 'tester');
-    const items = buildPartyMaintenanceChecklistItems(targets, store);
-    const split = splitPartyMaintenanceChecklistItems(items);
-    expect(split.active).toHaveLength(0);
-    expect(split.completed).toHaveLength(1);
-    expect(split.completed[0].key).toBe(key);
+    const recruitingStore = mergePartyMaintenanceChecklistState({}, key, { recruitAgain: true }, 'tester');
+    const recruitingItems = buildPartyMaintenanceChecklistItems(targets, recruitingStore);
+    const recruitingSplit = splitPartyMaintenanceChecklistItems(recruitingItems);
+    expect(recruitingSplit.active).toHaveLength(1);
+    expect(recruitingSplit.completed).toHaveLength(0);
+
+    const restartedStore = mergePartyMaintenanceChecklistState(recruitingStore, key, { partyRestarted: true }, 'tester');
+    const restartedItems = buildPartyMaintenanceChecklistItems(targets, restartedStore);
+    const restartedSplit = splitPartyMaintenanceChecklistItems(restartedItems);
+    expect(restartedSplit.active).toHaveLength(0);
+    expect(restartedSplit.completed).toHaveLength(1);
+    expect(restartedSplit.completed[0].key).toBe(key);
   });
 });
