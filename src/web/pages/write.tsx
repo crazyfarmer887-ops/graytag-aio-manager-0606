@@ -250,11 +250,13 @@ export default function WritePage() {
     let successCount = 0;
     const successProductUsids: string[] = [];
     for (const usid of doneProductUsids) {
+      const usidProfileNickname = generateProfileNickname();
+      const usidMemo = makeDefaultKeepMemo(selectedAliasId || undefined, keepPin || undefined, usidProfileNickname);
       try {
         const res = await fetch('/api/post/keepAcct', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...(cs.id === AUTO_COOKIE_ID ? {} : { AWSALB: cs.AWSALB, AWSALBCORS: cs.AWSALBCORS, JSESSIONID: cs.JSESSIONID }), productUsid: usid, keepAcct, keepPasswd, keepMemo }),
+          body: JSON.stringify({ ...(cs.id === AUTO_COOKIE_ID ? {} : { AWSALB: cs.AWSALB, AWSALBCORS: cs.AWSALBCORS, JSESSIONID: cs.JSESSIONID }), productUsid: usid, keepAcct, keepPasswd, keepMemo: usidMemo }),
         });
         if (res.ok) {
           successCount++;
