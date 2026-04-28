@@ -78,7 +78,7 @@ export function isValidProfileNickname(value: string): boolean {
 
 export function buildProfileWarningMemo(profileNickname: string, baseMemo: string): string {
   const nickname = isValidProfileNickname(profileNickname) ? normalizeProfileNickname(profileNickname) : generateProfileNickname(() => 0);
-  const warning = `⚠️ 1인 1프로필 원칙 안내\n\n배정 프로필: ${nickname}\n\n접속 후 반드시 위 프로필명으로 직접 만들어서 사용해주세요.\n다른 프로필을 사용하거나 새 프로필을 추가하면 다른 이용자와 충돌이 생겨 이용이 제한될 수 있습니다.\n프로필명이 없거나 접속이 안 되면 임의로 새로 만들지 말고 판매자 채팅으로 먼저 문의해주세요.`;
+  const warning = `⚠️ 1인 1프로필 원칙 안내\n\n배정 프로필: ${nickname}\n\n프로필을 만드실 때 해당 이름으로 꼭 만드신 뒤 사용하셔야 합니다. 그리고 반드시 위 프로필만 사용해주세요.\n\n다른 프로필을 사용하거나 새 프로필을 추가하면 다른 이용자와 충돌이 생겨 이용이 제한될 수 있습니다.\n프로필명이 없거나 접속이 안 되면 임의로 새로 만들지 말고 판매자 채팅으로 먼저 문의해주세요.`;
   const stripped = baseMemo.replace(/^⚠️ 1인 1프로필 원칙 안내[\s\S]*?(?=아래 내용 꼭 읽어주세요!|로그인 시도 간|https:\/\/email-verify\.xyz|$)/, '').trimStart();
   return `${warning}\n\n${stripped}`.trim();
 }
