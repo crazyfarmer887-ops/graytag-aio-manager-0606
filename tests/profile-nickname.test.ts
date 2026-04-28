@@ -32,11 +32,15 @@ describe('profile nickname assignment', () => {
     expect(isValidProfileNickname('abc')).toBe(false);
   });
 
-  test('puts one-profile warning at the very top of account delivery memo', () => {
+  test('puts the updated one-profile warning three times at the very top of account delivery memo', () => {
     const memo = buildProfileWarningMemo('수달이', '기존 안내문입니다.');
-    expect(memo.startsWith('⚠️ 1인 1프로필 원칙 안내')).toBe(true);
-    expect(memo).toContain('배정된 프로필 이름 : 수달이');
-    expect(memo).toContain('다른 프로필을 사용하거나 새 프로필을 추가하면');
+    expect(memo.startsWith('⚠️ 1인 1프로필 원칙 안내 ⚠️')).toBe(true);
+    expect(memo.match(/⚠️ 1인 1프로필 원칙 안내 ⚠️/g)).toHaveLength(3);
+    expect(memo.match(/배정된 프로필 이름 : 수달이/g)).toHaveLength(3);
+    expect(memo.match(/프로필을 만드실 때 해당 이름으로 꼭 만드신 뒤 사용하셔야 합니다\. 그리고 반드시 위 프로필만 사용해주세요\./g)).toHaveLength(3);
+    expect(memo.match(/다른 프로필을 사용하거나 새 프로필을 추가하면 다른 이용자와 충돌이 생겨 이용이 제한될 수 있습니다\./g)).toHaveLength(3);
+    expect(memo).not.toContain('배정 프로필:');
+    expect(memo).not.toContain('프로필명이 없거나 접속이 안 되면');
     expect(memo).toContain('기존 안내문입니다.');
   });
 
