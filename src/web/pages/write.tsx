@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { KeyRound, PartyPopper, CheckCircle2, KeySquare, Loader2, AlertTriangle, Trophy, Info, PenLine, Check, X, Square, Clock, ArrowLeftRight, Type, Mail, Link } from "lucide-react";
 import type { PartyMaintenanceChecklistStore } from "../../lib/party-maintenance-checklist";
 import { findMaintenanceCredentialForAlias } from "../../lib/write-maintenance-autofill";
+import { buildProfileAssignment, buildProfileWarningMemo, generateProfileNickname, isValidProfileNickname, normalizeProfileNickname } from "../../lib/profile-nickname";
 
 interface SlAlias { id: number; email: string; enabled: boolean; nb_forward: number; pin?: string | null; hasPin?: boolean; }
 
@@ -55,10 +56,11 @@ export default function WritePage() {
 
   const makeDefaultDesc = (svcLabel: string) => `✅ 이메일 코드 언제든지 셀프인증 가능! ✅ ${svcLabel} 프리미엄!\n구매 시 제공되는 "직접 운영하는" 이메일 코드 확인 사이트를 통해 언제든지 이메일을 확인하실 수 있으십니다!\n\n❤️ 1 1 1 원칙을 꼭 지켜주세요 ❤️\n1인 1기기 1계정 원칙이며 어길 시 약정에 의거 위약금 부과됩니다!`;
 
-  const makeDefaultKeepMemo = (emailId?: number|string, pin?: string) => {
+  const makeDefaultKeepMemo = (emailId?: number|string, pin?: string, profileName?: string) => {
     const eid = emailId || '{EMAIL_ID}';
     const p = pin || '{PIN}';
-    return `아래 내용 꼭 읽어주세요! 로그인 관련 내용입니다!!\n로그인 시도 간 필요한 이메일 코드는 아래 사이트에서 언제든지 셀프인증 가능합니다!\nhttps://email-verify.xyz/email/mail/${eid}\n사이트에서 필요한 핀번호는 : ${p}입니다!\n\n프로필을 만드실 때, 본명에서 가운데 글자를 별(*)로 가려주세요!\n만약, 특수기호 사용이 불가할 경우 본명으로 설정 부탁드립니다! 예)홍길동 또는 홍*동\n만약, 접속 시 기본 프로필 1개만  있거나 자리가 꽉 찼는데 기본 프로필이 있다면 그걸 먼저 수정하고 사용하시면 되겠습니다!\n\n🎬 성인인증은 필요하시면 직접 하셔야 합니다! 🎬\n\n즐거운 시청되세요!`;
+    const baseMemo = `아래 내용 꼭 읽어주세요! 로그인 관련 내용입니다!!\n로그인 시도 간 필요한 이메일 코드는 아래 사이트에서 언제든지 셀프인증 가능합니다!\nhttps://email-verify.xyz/email/mail/${eid}\n사이트에서 필요한 핀번호는 : ${p}입니다!\n\n프로필을 만드실 때는 배정된 프로필명만 사용해주세요.\n만약, 접속 시 기본 프로필 1개만 있거나 자리가 꽉 찼는데 기본 프로필이 있다면 그걸 먼저 수정하고 사용하시면 되겠습니다!\n\n🎬 성인인증은 필요하시면 직접 하셔야 합니다! 🎬\n\n즐거운 시청되세요!`;
+    return profileName?.trim() ? buildProfileWarningMemo(profileName, baseMemo) : baseMemo;
   };
 
   const [description, setDescription] = useState(() => makeDefaultDesc(DEFAULT_SVC_LABEL));
@@ -73,6 +75,7 @@ export default function WritePage() {
   const [keepPin, setKeepPin] = useState('');
   const [maintenanceCredentialStore, setMaintenanceCredentialStore] = useState<PartyMaintenanceChecklistStore>({});
   const [maintenanceAutofillMessage, setMaintenanceAutofillMessage] = useState('');
+  const [profileNickname, setProfileNickname] = useState(() => generateProfileNickname());
 
   // 진행 상태
   const [progressList, setProgressList] = useState<ProgressItem[]>([]);
@@ -229,6 +232,9 @@ export default function WritePage() {
         }
       } catch {}
       setSlLoading(false);
+      const nickname = generateProfileNickname();
+      setProfileNickname(nickname);
+      setKeepMemo(makeDefaultKeepMemo(undefined, undefined, nickname));
       setTimeout(() => setStep('keepAcct'), 500);
     }
   };
@@ -238,9 +244,11 @@ export default function WritePage() {
     const cs = cookies.find(c => c.id === selectedId);
     if (!cs) return;
     if (!keepAcct.trim() || !keepPasswd.trim()) { setError('아이디와 비밀번호를 입력해주세요'); return; }
+    if (!isValidProfileNickname(profileNickname)) { setError('프로필명은 한글 3~4글자로 입력해주세요'); return; }
 
     setSubmitting(true); setError(null);
     let successCount = 0;
+    const successProductUsids: string[] = [];
     for (const usid of doneProductUsids) {
       try {
         const res = await fetch('/api/post/keepAcct', {
@@ -248,9 +256,31 @@ export default function WritePage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ...(cs.id === AUTO_COOKIE_ID ? {} : { AWSALB: cs.AWSALB, AWSALBCORS: cs.AWSALBCORS, JSESSIONID: cs.JSESSIONID }), productUsid: usid, keepAcct, keepPasswd, keepMemo }),
         });
-        if (res.ok) successCount++;
+        if (res.ok) {
+          successCount++;
+          successProductUsids.push(usid);
+        }
       } catch {}
       await new Promise(r => setTimeout(r, 300));
+    }
+    if (successCount > 0) {
+      const svcLabel = SERVICES.find(s => s.key === service)?.label || service;
+      const selectedAlias = slAliases.find(alias => alias.id === selectedAliasId);
+      const assignment = buildProfileAssignment({
+        productUsids: successProductUsids,
+        serviceType: svcLabel,
+        accountEmail: keepAcct,
+        emailAliasId: selectedAliasId,
+        emailAlias: selectedAlias?.email || '',
+        profileNickname,
+      });
+      try {
+        await fetch('/api/profile-assignments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(assignment),
+        });
+      } catch {}
     }
     setSubmitting(false);
     if (successCount > 0) setStep('done');
@@ -265,7 +295,7 @@ export default function WritePage() {
     setDescription(makeDefaultDesc(DEFAULT_SVC_LABEL));
     setKeepAcct(''); setKeepPasswd('');
     setKeepMemo(makeDefaultKeepMemo());
-    setKeepPin(''); setSelectedAliasId(null); setSlAliases([]); setMaintenanceCredentialStore({}); setMaintenanceAutofillMessage('');
+    setKeepPin(''); setSelectedAliasId(null); setSlAliases([]); setMaintenanceCredentialStore({}); setMaintenanceAutofillMessage(''); setProfileNickname(generateProfileNickname());
   };
 
   // ── 쿠키 없음 ──────────────────────────────────────────────
@@ -318,7 +348,7 @@ export default function WritePage() {
       setKeepAcct(credential.accountEmail || aliasEmail || '');
       setKeepPasswd(credential.password);
       setKeepPin(credential.pin);
-      setKeepMemo(makeDefaultKeepMemo(credential.emailId, credential.pin));
+      setKeepMemo(makeDefaultKeepMemo(credential.emailId, credential.pin, profileNickname));
       setMaintenanceAutofillMessage('재정비 DB 자동 불러오기 완료 · 저장된 비밀번호/PIN/인증링크를 채웠어요.');
       return true;
     };
@@ -334,9 +364,9 @@ export default function WritePage() {
       const autoPin = alias.pin || lsPin || keepPin.trim();
       if (autoPin) {
         setKeepPin(autoPin);
-        setKeepMemo(makeDefaultKeepMemo(alias.id, autoPin));
+        setKeepMemo(makeDefaultKeepMemo(alias.id, autoPin, profileNickname));
       } else {
-        setKeepMemo(makeDefaultKeepMemo(alias.id));
+        setKeepMemo(makeDefaultKeepMemo(alias.id, undefined, profileNickname));
       }
     };
 
@@ -344,10 +374,20 @@ export default function WritePage() {
     const handlePinChange = (newPin: string) => {
       setKeepPin(newPin);
       if (selectedAliasId && newPin.trim()) {
-        setKeepMemo(makeDefaultKeepMemo(selectedAliasId, newPin.trim()));
+        setKeepMemo(makeDefaultKeepMemo(selectedAliasId, newPin.trim(), profileNickname));
       } else if (selectedAliasId) {
-        setKeepMemo(makeDefaultKeepMemo(selectedAliasId));
+        setKeepMemo(makeDefaultKeepMemo(selectedAliasId, undefined, profileNickname));
       }
+    };
+
+    const handleProfileNicknameChange = (value: string) => {
+      const nickname = normalizeProfileNickname(value);
+      setProfileNickname(nickname);
+      setKeepMemo(makeDefaultKeepMemo(selectedAliasId || undefined, keepPin || undefined, nickname));
+    };
+
+    const handleRandomProfileNickname = () => {
+      handleProfileNicknameChange(generateProfileNickname());
     };
 
     return (
@@ -418,6 +458,16 @@ export default function WritePage() {
               {maintenanceAutofillMessage}
             </div>
           )}
+          <label style={labelStyle}>랜덤 프로필명 *</label>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+            <input value={profileNickname} onChange={e => handleProfileNicknameChange(e.target.value)} placeholder="예: 고양이" style={{ ...inputStyle, marginBottom: 0 }} />
+            <button onClick={handleRandomProfileNickname} style={{ ...btnStyle('#F3F0FF', '#7C3AED'), width: 110, padding: '9px 10px', fontSize: 12 }}>
+              랜덤 생성
+            </button>
+          </div>
+          <div style={{ background: '#FFFBEB', borderRadius: 8, padding: '8px 10px', marginBottom: 10, fontSize: 11, color: '#92400E' }}>
+            ⚠️ 1인 1프로필 원칙 안내가 계정 전달 문구 맨 위에 자동으로 들어갑니다.
+          </div>
           <label style={labelStyle}>아이디 (이메일) *</label>
           <input value={keepAcct} onChange={e => setKeepAcct(e.target.value)} placeholder="example@email.com" style={inputStyle} />
           <label style={labelStyle}>비밀번호 *</label>

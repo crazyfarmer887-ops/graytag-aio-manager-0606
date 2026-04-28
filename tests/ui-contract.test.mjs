@@ -53,6 +53,11 @@ test('OTT home and navigation use the refreshed UI structure', () => {
   assert.match(write, /maintenanceCredentialStore/);
   assert.match(write, /setKeepPasswd\(credential\.password\)/);
   assert.match(write, /setKeepPasswd\(''\)/);
+  assert.match(write, /랜덤 프로필명/);
+  assert.match(write, /profileNickname/);
+  assert.match(write, /buildProfileWarningMemo/);
+  assert.match(write, /profile-assignments/);
+  assert.match(write, /⚠️ 1인 1프로필 원칙 안내/);
   assert.doesNotMatch(home, /최근 만료 파티 체크리스트/);
   assert.doesNotMatch(home, /expired-party-checklists/);
   assert.match(home, /실시간 채팅 알림/);

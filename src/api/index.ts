@@ -17,6 +17,7 @@ import { createProfileAuditProgress, finishProfileAuditProgress, loadProfileAudi
 import { checkNetflixProfiles, fetchNetflixEmailCodeViaEmailServer } from './netflix-profile-checker';
 import { extractGraytagChats, findLatestBuyerInquiryMessage } from './chat-message-summary';
 import { mergePartyMaintenanceChecklistState, type PartyMaintenanceChecklistStore } from '../lib/party-maintenance-checklist';
+import { buildProfileAssignment, type ProfileAssignment } from '../lib/profile-nickname';
 
 const EMAIL_SERVER = "http://127.0.0.1:3001";
 const app = new Hono();
@@ -36,6 +37,7 @@ const ADMIN_REQUIRED_GET_PREFIXES = [
   '/email-alias-fill',
   '/profile-audit',
   '/party-maintenance-checklists',
+  '/profile-assignments',
 ];
 
 function normalizedApiPath(path: string): string {
@@ -2652,6 +2654,7 @@ app.post('/chat/mark-read', async (c) => {
 const PARTY_FEEDBACK_PATH = '/home/ubuntu/.hermes/hermes-agent/graytag-aio-manager-0606/data/party-feedback.json';
 const FEEDBACK_SETTINGS_PATH = '/home/ubuntu/.hermes/hermes-agent/graytag-aio-manager-0606/data/feedback-settings.json';
 const PARTY_MAINTENANCE_CHECKLIST_PATH = '/home/ubuntu/.hermes/hermes-agent/graytag-aio-manager-0606/data/party-maintenance-checklists.json';
+const PROFILE_ASSIGNMENTS_PATH = '/home/ubuntu/.hermes/hermes-agent/graytag-aio-manager-0606/data/profile-assignments.json';
 
 interface FeedbackItem {
   id: string;
@@ -2707,6 +2710,20 @@ function savePartyMaintenanceChecklistStore(store: PartyMaintenanceChecklistStor
   const dir = PARTY_MAINTENANCE_CHECKLIST_PATH.replace(/\/[^\/]+$/, '');
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   writeFileSync(PARTY_MAINTENANCE_CHECKLIST_PATH, JSON.stringify(store, null, 2), 'utf8');
+}
+
+function loadProfileAssignments(): ProfileAssignment[] {
+  try {
+    if (!existsSync(PROFILE_ASSIGNMENTS_PATH)) return [];
+    const raw = JSON.parse(readFileSync(PROFILE_ASSIGNMENTS_PATH, 'utf8'));
+    return Array.isArray(raw) ? raw : [];
+  } catch { return []; }
+}
+
+function saveProfileAssignments(items: ProfileAssignment[]) {
+  const dir = PROFILE_ASSIGNMENTS_PATH.replace(/\/[^\/]+$/, '');
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  writeFileSync(PROFILE_ASSIGNMENTS_PATH, JSON.stringify(items, null, 2), 'utf8');
 }
 
 const FB_PARTY_MAX: Record<string, number> = {
@@ -2909,6 +2926,30 @@ app.get('/party-feedback', (c) => {
 app.get('/party-maintenance-checklists', (c) => {
   const store = loadPartyMaintenanceChecklistStore();
   return c.json({ ok: true, store, keys: Object.keys(store).length, updatedAt: new Date().toISOString() });
+});
+
+app.get('/profile-assignments', (c) => {
+  const items = loadProfileAssignments();
+  return c.json({ ok: true, items, count: items.length, updatedAt: new Date().toISOString() });
+});
+
+app.post('/profile-assignments', async (c) => {
+  const body = await c.req.json().catch(() => ({})) as any;
+  const assignment = buildProfileAssignment({
+    productUsids: Array.isArray(body.productUsids) ? body.productUsids.map(String) : [],
+    serviceType: String(body.serviceType || ''),
+    accountEmail: String(body.accountEmail || ''),
+    emailAliasId: body.emailAliasId ?? null,
+    emailAlias: String(body.emailAlias || ''),
+    profileNickname: String(body.profileNickname || ''),
+  });
+  if (!assignment.productUsids.length || !assignment.accountEmail || !assignment.profileNickname) {
+    return c.json({ ok: false, error: 'productUsids, accountEmail, profileNickname required' }, 400);
+  }
+  const items = loadProfileAssignments();
+  const next = [assignment, ...items.filter(item => item.id !== assignment.id)];
+  saveProfileAssignments(next);
+  return c.json({ ok: true, item: assignment, count: next.length });
 });
 
 app.post('/party-maintenance-checklists/:key', async (c) => {
