@@ -35,7 +35,7 @@ describe('profile nickname assignment', () => {
   test('puts one-profile warning at the very top of account delivery memo', () => {
     const memo = buildProfileWarningMemo('수달이', '기존 안내문입니다.');
     expect(memo.startsWith('⚠️ 1인 1프로필 원칙 안내')).toBe(true);
-    expect(memo).toContain('배정 프로필: 수달이');
+    expect(memo).toContain('배정된 프로필 이름 : 수달이');
     expect(memo).toContain('다른 프로필을 사용하거나 새 프로필을 추가하면');
     expect(memo).toContain('기존 안내문입니다.');
   });
