@@ -5,7 +5,7 @@ import { useLocation } from "wouter";
 import { CATEGORIES } from "../lib/constants";
 import { buildPartyMaintenanceTargets, buildServiceStats, type PartyMaintenanceTarget } from "../lib/dashboard-stats";
 import { buildChatAlerts, buildUnreadChatAlerts, type ChatAlertItem, type ChatAlertRoom } from "../lib/chat-alerts";
-import { buildPartyMaintenanceChecklistItems, generateMaintenancePassword, mergePartyMaintenanceChecklistState, type PartyMaintenanceChecklistItem, type PartyMaintenanceChecklistState, type PartyMaintenanceChecklistStore } from "../../lib/party-maintenance-checklist";
+import { buildPartyMaintenanceChecklistItems, mergePartyMaintenanceChecklistState, splitPartyMaintenanceChecklistItems, type PartyMaintenanceChecklistItem, type PartyMaintenanceChecklistState, type PartyMaintenanceChecklistStore } from "../../lib/party-maintenance-checklist";
 import { RefreshCw, ChevronRight, User, Loader2, TrendingUp, TrendingDown, Wallet, CheckCircle2, RotateCcw, Settings, Zap, ShieldAlert, Bell, MessageCircle } from "lucide-react";
 import { Card, StatCard } from "../components/ui/card";
 import { StatusBadge } from "../components/ui/status-badge";
@@ -554,151 +554,104 @@ function ChoiceButton({ label, active, onClick, tone = 'purple' }: { label: stri
   );
 }
 
-function ChecklistRow({ label, value, onChange }: { label: string; value: boolean | null; onChange: (value: boolean) => void }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, background: '#F9FAFB', borderRadius: 9, padding: '6px 7px' }}>
-      <span style={{ fontSize: 10, color: '#4B5563', fontWeight: 800 }}>{label}</span>
-      <span style={{ display: 'flex', gap: 4 }}>
-        <ChoiceButton label="Y" active={value === true} onClick={() => onChange(true)} tone="green" />
-        <ChoiceButton label="N" active={value === false} onClick={() => onChange(false)} tone="red" />
-      </span>
-    </div>
-  );
-}
-
-function PartyMaintenancePanel({ items, regeneratingPinKey, onUpdate, onRegeneratePin, onGoManage, onGoWrite }: { items: PartyMaintenanceChecklistItem<PartyMaintenanceTarget>[]; regeneratingPinKey: string | null; onUpdate: (key: string, patch: Partial<PartyMaintenanceChecklistState>) => void; onRegeneratePin: (item: PartyMaintenanceChecklistItem<PartyMaintenanceTarget>) => void; onGoManage: () => void; onGoWrite: () => void }) {
+function PartyMaintenancePanel({ items, onUpdate, onGoManage, onGoWrite }: { items: PartyMaintenanceChecklistItem<PartyMaintenanceTarget>[]; onUpdate: (key: string, patch: Partial<PartyMaintenanceChecklistState>) => void; onGoManage: () => void; onGoWrite: () => void }) {
+  const { active, completed } = splitPartyMaintenanceChecklistItems(items);
+  const [tab, setTab] = useState<'active' | 'completed'>('active');
   if (items.length === 0) return null;
-  const noCurrentUsers = items.filter((item) => item.target.reason === 'no-current-users').length;
-  const expiringSoon = items.filter((item) => item.target.reason === 'expiring-soon').length;
-  const completed = items.filter((item) => item.progress.done >= item.progress.total).length;
+  const currentItems = tab === 'active' ? active : completed;
+  const noCurrentUsers = active.filter((item) => item.target.reason === 'no-current-users').length;
+  const expiringSoon = active.filter((item) => item.target.reason === 'expiring-soon').length;
   const shortDate = (value: string) => value ? value.replace(/-/g, '/').slice(2) : '날짜 없음';
+  const tabButtonStyle = (activeTab: boolean, tone: 'warning' | 'success') => ({
+    border: 'none',
+    borderRadius: 999,
+    padding: '7px 10px',
+    background: activeTab ? (tone === 'success' ? '#DCFCE7' : '#FEF3C7') : '#F3F4F6',
+    color: activeTab ? (tone === 'success' ? '#047857' : '#92400E') : '#6B7280',
+    fontSize: 11,
+    fontWeight: 900,
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+  });
 
   return (
-    <Card tone="warning" style={{ marginBottom: 16 }}>
+    <Card tone={active.length > 0 ? 'warning' : 'success'} style={{ marginBottom: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
         <div>
           <div style={{ fontSize: 14, fontWeight: 900, color: 'var(--foreground)' }}>파티 재정비 대상</div>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>이용중 0명/7일 이내 만료 계정의 재모집·정리 Y/N 체크</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>YES 클릭 시 완료한 파티 재정비 대상으로 이동</div>
         </div>
-        <StatusBadge tone="warning">{completed}/{items.length} 완료</StatusBadge>
+        <StatusBadge tone={active.length > 0 ? 'warning' : 'success'}>{active.length}건 남음</StatusBadge>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
-        <div style={{ background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 12, padding: '9px 10px' }}>
-          <div style={{ fontSize: 10, color: '#C2410C', fontWeight: 800 }}>이용중 0명</div>
-          <div style={{ fontSize: 18, color: '#9A3412', fontWeight: 900, marginTop: 2 }}>{noCurrentUsers}건</div>
-        </div>
-        <div style={{ background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 12, padding: '9px 10px' }}>
-          <div style={{ fontSize: 10, color: '#92400E', fontWeight: 800 }}>7일 이내 만료</div>
-          <div style={{ fontSize: 18, color: '#78350F', fontWeight: 900, marginTop: 2 }}>{expiringSoon}건</div>
-        </div>
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {items.slice(0, 8).map((item) => {
-          const target = item.target;
-          return (
-            <div key={item.key} style={{ background: '#fff', border: '1px solid #F3F4F6', borderRadius: 12, padding: '10px 11px' }}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: 12, fontWeight: 900, color: '#1E1B4B' }}>{target.serviceType}</span>
-                    <span style={{ fontSize: 10, fontWeight: 800, color: target.reason === 'no-current-users' ? '#C2410C' : '#92400E', background: target.reason === 'no-current-users' ? '#FFEDD5' : '#FEF3C7', borderRadius: 999, padding: '2px 7px' }}>{target.reasonLabel}</span>
-                    <span style={{ fontSize: 10, fontWeight: 900, color: '#7C3AED', background: '#F5F3FF', borderRadius: 999, padding: '2px 7px' }}>{item.progress.done}/{item.progress.total}</span>
-                  </div>
-                  <div style={{ fontSize: 11, color: '#6B7280', marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {target.accountEmail} · 최근 파티원 {target.lastMemberName}
-                  </div>
-                </div>
-                <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                  <div style={{ fontSize: 11, color: target.reason === 'expiring-soon' ? '#EF4444' : '#9A3412', fontWeight: 900 }}>
-                    {target.daysUntilExpiry !== null ? (target.daysUntilExpiry <= 0 ? '만료됨' : `D-${target.daysUntilExpiry}`) : '날짜 없음'}
-                  </div>
-                  <div style={{ fontSize: 10, color: '#9CA3AF', marginTop: 2 }}>{shortDate(target.expiryDate)}</div>
-                </div>
-              </div>
 
-              <div style={{ marginTop: 9, background: '#FAFAFF', border: '1px solid #EDE9FE', borderRadius: 12, padding: '9px 10px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                  <div style={{ fontSize: 11, color: '#1E1B4B', fontWeight: 900 }}>해당 계정으로 또 다시 파티 모집을 진행할건가?</div>
-                  <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-                    <ChoiceButton label="Y" active={item.recruitAgain === true} onClick={() => onUpdate(item.key, { recruitAgain: true })} tone="green" />
-                    <ChoiceButton label="N" active={item.recruitAgain === false} onClick={() => onUpdate(item.key, { recruitAgain: false })} tone="red" />
-                  </div>
-                </div>
-                {item.recruitAgain === true && (
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 6 }}>
-                    <ChecklistRow label="기존 구독이 유지됐는가" value={item.subscriptionKept} onChange={(value) => onUpdate(item.key, { subscriptionKept: value })} />
-                    {item.subscriptionKept === true && (
-                      <div style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 9, padding: '7px 8px' }}>
-                        <label style={{ display: 'block', fontSize: 10, color: '#047857', fontWeight: 900, marginBottom: 5 }}>구독 결제일은 매달 몇일인가?</label>
-                        <input
-                          type="number"
-                          inputMode="numeric"
-                          min={1}
-                          max={31}
-                          value={item.subscriptionBillingDay}
-                          placeholder="예: 15"
-                          onChange={(event) => onUpdate(item.key, { subscriptionBillingDay: event.target.value })}
-                          style={{ width: '100%', boxSizing: 'border-box', border: '1px solid #A7F3D0', borderRadius: 8, padding: '7px 9px', fontSize: 11, color: '#065F46', fontWeight: 700, outline: 'none', fontFamily: 'inherit', background: '#fff' }}
-                        />
-                      </div>
-                    )}
-                    <ChecklistRow label="기존 파티원 프로필을 제거했는가" value={item.profileRemoved} onChange={(value) => onUpdate(item.key, { profileRemoved: value })} />
-                    <ChecklistRow label="모든 기기에서 로그아웃했는가" value={item.devicesLoggedOut} onChange={(value) => onUpdate(item.key, { devicesLoggedOut: value })} />
-                    <div style={{ background: '#EEF2FF', border: '1px solid #C7D2FE', borderRadius: 9, padding: '7px 8px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                        <span style={{ fontSize: 10, color: '#4338CA', fontWeight: 900 }}>비밀번호 변경 준비</span>
-                        <button onClick={() => onUpdate(item.key, { passwordChanged: true, changedPassword: generateMaintenancePassword() })} style={{ border: 'none', borderRadius: 8, padding: '6px 9px', background: '#4F46E5', color: '#fff', fontSize: 10, fontWeight: 900, cursor: 'pointer', fontFamily: 'inherit' }}>
-                          랜덤 12자리 비밀번호 생성
-                        </button>
-                      </div>
-                      {item.changedPassword && <div style={{ fontSize: 11, color: '#312E81', fontWeight: 900, marginBottom: 6, letterSpacing: 0.5 }}>변경 예정 비밀번호: {item.changedPassword}</div>}
-                      <ChecklistRow label="비밀번호를 변경했는가" value={item.passwordChanged} onChange={(value) => onUpdate(item.key, { passwordChanged: value })} />
+      <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+        <button onClick={() => setTab('active')} style={tabButtonStyle(tab === 'active', 'warning')}>재정비 대상 {active.length}</button>
+        <button onClick={() => setTab('completed')} style={tabButtonStyle(tab === 'completed', 'success')}>완료한 파티 재정비 대상 {completed.length}</button>
+      </div>
+
+      {tab === 'active' && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
+          <div style={{ background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 12, padding: '8px 10px' }}>
+            <div style={{ fontSize: 10, color: '#C2410C', fontWeight: 800 }}>이용중 0명</div>
+            <div style={{ fontSize: 16, color: '#9A3412', fontWeight: 900, marginTop: 2 }}>{noCurrentUsers}건</div>
+          </div>
+          <div style={{ background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 12, padding: '8px 10px' }}>
+            <div style={{ fontSize: 10, color: '#92400E', fontWeight: 800 }}>7일 이내 만료</div>
+            <div style={{ fontSize: 16, color: '#78350F', fontWeight: 900, marginTop: 2 }}>{expiringSoon}건</div>
+          </div>
+        </div>
+      )}
+
+      {currentItems.length === 0 ? (
+        <div style={{ background: tab === 'completed' ? '#F0FDF4' : '#FFFBEB', border: `1px solid ${tab === 'completed' ? '#BBF7D0' : '#FDE68A'}`, borderRadius: 12, padding: '12px', fontSize: 12, color: tab === 'completed' ? '#047857' : '#92400E', fontWeight: 800 }}>
+          {tab === 'completed' ? '아직 완료한 파티 재정비 대상이 없어요.' : '현재 처리할 파티 재정비 대상이 없어요.'}
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+          {currentItems.slice(0, 12).map((item) => {
+            const target = item.target;
+            const isCompleted = tab === 'completed';
+            return (
+              <div key={item.key} style={{ background: '#fff', border: `1px solid ${isCompleted ? '#BBF7D0' : '#F3F4F6'}`, borderRadius: 12, padding: '9px 10px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 12, fontWeight: 900, color: '#1E1B4B' }}>{target.serviceType}</span>
+                      <span style={{ fontSize: 10, fontWeight: 800, color: target.reason === 'no-current-users' ? '#C2410C' : '#92400E', background: target.reason === 'no-current-users' ? '#FFEDD5' : '#FEF3C7', borderRadius: 999, padding: '2px 7px' }}>{target.reasonLabel}</span>
+                      {isCompleted && <span style={{ fontSize: 10, fontWeight: 900, color: '#047857', background: '#DCFCE7', borderRadius: 999, padding: '2px 7px' }}>재시작 완료</span>}
                     </div>
-                    {item.passwordChanged === true && !item.changedPassword.trim() && (
-                      <div style={{ fontSize: 10, color: '#DC2626', fontWeight: 800, padding: '0 2px' }}>먼저 랜덤 비밀번호를 만들거나 변경된 비밀번호를 입력해주세요.</div>
-                    )}
-                    <div style={{ background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 9, padding: '7px 8px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                        <span style={{ fontSize: 10, color: '#C2410C', fontWeight: 900 }}>Email Dashboard PIN</span>
-                        <button onClick={() => onRegeneratePin(item)} disabled={regeneratingPinKey === item.key} style={{ border: 'none', borderRadius: 8, padding: '6px 9px', background: '#F97316', color: '#fff', fontSize: 10, fontWeight: 900, cursor: regeneratingPinKey === item.key ? 'not-allowed' : 'pointer', fontFamily: 'inherit', opacity: regeneratingPinKey === item.key ? 0.65 : 1 }}>
-                          {regeneratingPinKey === item.key ? '변경 확인중...' : '랜덤 6자리 PIN 변경'}
-                        </button>
-                      </div>
-                      {item.generatedPin && (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 6 }}>
-                          <div style={{ fontSize: 11, color: '#9A3412', fontWeight: 900 }}>변경된 PIN: {item.generatedPin}</div>
-                          <div style={{ fontSize: 10, color: '#059669', fontWeight: 900 }}>PIN 변경 확인됨 · Email #{item.generatedPinAliasId || '-'}</div>
-                          {item.generatedPinAliasId && <button onClick={() => window.open(`https://email-verify.xyz/email/mail/${item.generatedPinAliasId}`, '_blank', 'noopener,noreferrer')} style={{ alignSelf: 'flex-start', border: 'none', borderRadius: 8, padding: '5px 8px', background: '#FFEDD5', color: '#C2410C', fontSize: 10, fontWeight: 900, cursor: 'pointer', fontFamily: 'inherit' }}>이메일 새탭 열기</button>}
-                        </div>
-                      )}
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, background: '#fff', borderRadius: 9, padding: '6px 7px' }}>
-                        <span style={{ fontSize: 10, color: '#4B5563', fontWeight: 800 }}>PIN 번호를 변경했는가</span>
-                        <span style={{ display: 'flex', gap: 4 }}>
-                          <ChoiceButton label="Y" active={item.pinStillUnchanged === false} onClick={() => onUpdate(item.key, { pinStillUnchanged: false })} tone="green" />
-                          <ChoiceButton label="N" active={item.pinStillUnchanged === true} onClick={() => onUpdate(item.key, { pinStillUnchanged: true })} tone="red" />
-                        </span>
-                      </div>
+                    <div style={{ fontSize: 11, color: '#6B7280', marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {target.accountEmail} · 최근 {target.lastMemberName || '없음'} · {target.usingCount}/{target.totalSlots}
                     </div>
                   </div>
-                )}
-                {item.recruitAgain === false && (
-                  <ChecklistRow label="구독을 해지했는가" value={item.subscriptionCancelled} onChange={(value) => onUpdate(item.key, { subscriptionCancelled: value })} />
-                )}
-                <div style={{ fontSize: 10, color: '#9CA3AF', marginTop: 7 }}>다음 조치: {item.nextAction}</div>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 7, marginTop: 9 }}>
-                <div style={{ background: '#F9FAFB', borderRadius: 9, padding: '6px 7px' }}>
-                  <div style={{ fontSize: 9, color: '#9CA3AF', fontWeight: 800 }}>이용중</div>
-                  <div style={{ fontSize: 12, color: '#111827', fontWeight: 900 }}>{target.usingCount}/{target.totalSlots}</div>
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <div style={{ fontSize: 11, color: target.reason === 'expiring-soon' ? '#EF4444' : '#9A3412', fontWeight: 900 }}>
+                      {target.daysUntilExpiry !== null ? (target.daysUntilExpiry <= 0 ? '만료됨' : `D-${target.daysUntilExpiry}`) : '날짜 없음'}
+                    </div>
+                    <div style={{ fontSize: 10, color: '#9CA3AF', marginTop: 2 }}>{shortDate(target.expiryDate)}</div>
+                  </div>
                 </div>
-                <button onClick={onGoManage} style={{ border: 'none', borderRadius: 9, padding: '6px 7px', background: '#EDE9FE', color: '#7C3AED', fontSize: 10, fontWeight: 900, cursor: 'pointer', fontFamily: 'inherit' }}>계정 관리</button>
-                <button onClick={onGoWrite} style={{ border: 'none', borderRadius: 9, padding: '6px 7px', background: '#DCFCE7', color: '#047857', fontSize: 10, fontWeight: 900, cursor: 'pointer', fontFamily: 'inherit' }}>모집 글</button>
+
+                {!isCompleted ? (
+                  <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, background: '#FAFAFF', border: '1px solid #EDE9FE', borderRadius: 10, padding: '7px 8px' }}>
+                    <span style={{ fontSize: 11, color: '#1E1B4B', fontWeight: 900 }}>파티 재시작 했는가?</span>
+                    <span style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                      <ChoiceButton label="YES" active={item.recruitAgain === true} onClick={() => onUpdate(item.key, { recruitAgain: true })} tone="green" />
+                      <ChoiceButton label="NO" active={item.recruitAgain === false} onClick={() => onUpdate(item.key, { recruitAgain: false })} tone="red" />
+                    </span>
+                  </div>
+                ) : (
+                  <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
+                    <button onClick={onGoManage} style={{ border: 'none', borderRadius: 9, padding: '6px 7px', background: '#EDE9FE', color: '#7C3AED', fontSize: 10, fontWeight: 900, cursor: 'pointer', fontFamily: 'inherit' }}>계정 관리</button>
+                    <button onClick={onGoWrite} style={{ border: 'none', borderRadius: 9, padding: '6px 7px', background: '#DCFCE7', color: '#047857', fontSize: 10, fontWeight: 900, cursor: 'pointer', fontFamily: 'inherit' }}>모집 글</button>
+                    <button onClick={() => onUpdate(item.key, { recruitAgain: null })} style={{ border: 'none', borderRadius: 9, padding: '6px 7px', background: '#F3F4F6', color: '#6B7280', fontSize: 10, fontWeight: 900, cursor: 'pointer', fontFamily: 'inherit' }}>대상 복귀</button>
+                  </div>
+                )}
               </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
     </Card>
   );
 }
@@ -780,7 +733,6 @@ export default function HomePage() {
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [partyMaintenanceChecklistStore, setPartyMaintenanceChecklistStore] = useState<PartyMaintenanceChecklistStore>({});
-  const [regeneratingPinKey, setRegeneratingPinKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [, navigate] = useLocation();
@@ -823,25 +775,6 @@ export default function HomePage() {
     } catch { await fetchPartyMaintenanceChecklists(); }
   };
 
-  const regeneratePartyMaintenancePin = async (item: PartyMaintenanceChecklistItem<PartyMaintenanceTarget>) => {
-    if (regeneratingPinKey) return;
-    setRegeneratingPinKey(item.key);
-    try {
-      const res = await fetch(`/api/party-maintenance-checklists/${encodeURIComponent(item.key)}/pin/regenerate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accountEmail: item.target.accountEmail, serviceType: item.target.serviceType }),
-      });
-      const json = await res.json() as { ok?: boolean; error?: string; store?: PartyMaintenanceChecklistStore };
-      if (!res.ok || !json.ok) throw new Error(json.error || 'PIN 재생성 실패');
-      if (json.store) setPartyMaintenanceChecklistStore(json.store);
-    } catch (e: any) {
-      window.alert(e.message || 'PIN 재생성 실패');
-      await fetchPartyMaintenanceChecklists();
-    } finally {
-      setRegeneratingPinKey(null);
-    }
-  };
 
   const fetchChatAlerts = async (silent = false) => {
     if (!silent) setChatLoading(true);
@@ -1178,9 +1111,7 @@ export default function HomePage() {
 
           <PartyMaintenancePanel
             items={partyMaintenanceChecklistItems}
-            regeneratingPinKey={regeneratingPinKey}
             onUpdate={updatePartyMaintenanceChecklist}
-            onRegeneratePin={regeneratePartyMaintenancePin}
             onGoManage={() => navigate('/manage')}
             onGoWrite={() => navigate('/write')}
           />

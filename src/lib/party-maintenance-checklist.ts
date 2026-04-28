@@ -201,3 +201,13 @@ export function buildPartyMaintenanceChecklistItems<T extends PartyMaintenanceTa
     };
   });
 }
+
+export function splitPartyMaintenanceChecklistItems<T extends PartyMaintenanceTargetLike>(
+  items: Array<PartyMaintenanceChecklistItem<T>>,
+): { active: Array<PartyMaintenanceChecklistItem<T>>; completed: Array<PartyMaintenanceChecklistItem<T>> } {
+  return items.reduce<{ active: Array<PartyMaintenanceChecklistItem<T>>; completed: Array<PartyMaintenanceChecklistItem<T>> }>((acc, item) => {
+    if (item.recruitAgain === true) acc.completed.push(item);
+    else acc.active.push(item);
+    return acc;
+  }, { active: [], completed: [] });
+}

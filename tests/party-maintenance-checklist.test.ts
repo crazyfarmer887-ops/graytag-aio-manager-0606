@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { buildPartyMaintenanceChecklistItems, generateMaintenancePassword, mergePartyMaintenanceChecklistState, partyMaintenanceChecklistKey } from '../src/lib/party-maintenance-checklist';
+import { buildPartyMaintenanceChecklistItems, generateMaintenancePassword, mergePartyMaintenanceChecklistState, partyMaintenanceChecklistKey, splitPartyMaintenanceChecklistItems } from '../src/lib/party-maintenance-checklist';
 
 const targets = [
   {
@@ -117,5 +117,15 @@ describe('party maintenance checklist', () => {
     expect(item.subscriptionBillingDay).toBe('');
     expect(item.progress).toEqual({ done: 2, total: 2 });
     expect(item.nextAction).toBe('구독 해지 여부 확인');
+  });
+
+  test('splits restarted YES items into completed maintenance targets', () => {
+    const key = partyMaintenanceChecklistKey(targets[0]);
+    const store = mergePartyMaintenanceChecklistState({}, key, { recruitAgain: true }, 'tester');
+    const items = buildPartyMaintenanceChecklistItems(targets, store);
+    const split = splitPartyMaintenanceChecklistItems(items);
+    expect(split.active).toHaveLength(0);
+    expect(split.completed).toHaveLength(1);
+    expect(split.completed[0].key).toBe(key);
   });
 });
