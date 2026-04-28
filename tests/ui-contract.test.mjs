@@ -47,6 +47,12 @@ test('OTT home and navigation use the refreshed UI structure', () => {
   assert.match(home, /기존 파티원 프로필을 제거했는가/);
   assert.match(home, /구독을 해지했는가/);
   assert.match(home, /party-maintenance-checklists/);
+  const write = read('src/web/pages/write.tsx');
+  assert.match(write, /재정비 DB 자동 불러오기/);
+  assert.match(write, /findMaintenanceCredentialForAlias/);
+  assert.match(write, /maintenanceCredentialStore/);
+  assert.match(write, /setKeepPasswd\(credential\.password\)/);
+  assert.match(write, /setKeepPasswd\(''\)/);
   assert.doesNotMatch(home, /최근 만료 파티 체크리스트/);
   assert.doesNotMatch(home, /expired-party-checklists/);
   assert.match(home, /실시간 채팅 알림/);

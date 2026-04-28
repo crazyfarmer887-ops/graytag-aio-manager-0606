@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { KeyRound, PartyPopper, CheckCircle2, KeySquare, Loader2, AlertTriangle, Trophy, Info, PenLine, Check, X, Square, Clock, ArrowLeftRight, Type, Mail, Link } from "lucide-react";
+import type { PartyMaintenanceChecklistStore } from "../../lib/party-maintenance-checklist";
+import { findMaintenanceCredentialForAlias } from "../../lib/write-maintenance-autofill";
 
 interface SlAlias { id: number; email: string; enabled: boolean; nb_forward: number; pin?: string | null; hasPin?: boolean; }
 
@@ -69,6 +71,8 @@ export default function WritePage() {
   const [slLoading, setSlLoading] = useState(false);
   const [selectedAliasId, setSelectedAliasId] = useState<number | null>(null);
   const [keepPin, setKeepPin] = useState('');
+  const [maintenanceCredentialStore, setMaintenanceCredentialStore] = useState<PartyMaintenanceChecklistStore>({});
+  const [maintenanceAutofillMessage, setMaintenanceAutofillMessage] = useState('');
 
   // 진행 상태
   const [progressList, setProgressList] = useState<ProgressItem[]>([]);
@@ -210,12 +214,19 @@ export default function WritePage() {
 
     setDoneProductUsids(results);
     if (results.length > 0) {
-      // 이메일 별칭 목록 미리 로드
+      // 이메일 별칭 목록 + 재정비 DB 미리 로드
       setSlLoading(true);
       try {
-        const aliasRes = await fetch('/api/sl/aliases');
+        const [aliasRes, maintenanceRes] = await Promise.all([
+          fetch('/api/sl/aliases'),
+          fetch('/api/party-maintenance-checklists'),
+        ]);
         if (!aliasRes.ok) throw new Error('fetch failed'); const aliasJson = await aliasRes.json() as any;
         setSlAliases((aliasJson.aliases || []).filter((a: SlAlias) => a.enabled));
+        if (maintenanceRes.ok) {
+          const maintenanceJson = await maintenanceRes.json() as any;
+          setMaintenanceCredentialStore(maintenanceJson.store || {});
+        }
       } catch {}
       setSlLoading(false);
       setTimeout(() => setStep('keepAcct'), 500);
@@ -254,7 +265,7 @@ export default function WritePage() {
     setDescription(makeDefaultDesc(DEFAULT_SVC_LABEL));
     setKeepAcct(''); setKeepPasswd('');
     setKeepMemo(makeDefaultKeepMemo());
-    setKeepPin(''); setSelectedAliasId(null); setSlAliases([]);
+    setKeepPin(''); setSelectedAliasId(null); setSlAliases([]); setMaintenanceCredentialStore({}); setMaintenanceAutofillMessage('');
   };
 
   // ── 쿠키 없음 ──────────────────────────────────────────────
@@ -297,10 +308,27 @@ export default function WritePage() {
   if (step === 'keepAcct') {
     const successCount = doneProductUsids.length;
 
+    const applyMaintenanceCredential = (aliasId: number | string, aliasEmail?: string): boolean => {
+      const credential = findMaintenanceCredentialForAlias(maintenanceCredentialStore, aliasId);
+      if (!credential) {
+        setMaintenanceAutofillMessage('재정비 DB에 저장된 비밀번호/PIN이 아직 없어요. 직접 입력하거나 재정비 UI에서 저장해주세요.');
+        return false;
+      }
+      setSelectedAliasId(Number(aliasId));
+      setKeepAcct(credential.accountEmail || aliasEmail || '');
+      setKeepPasswd(credential.password);
+      setKeepPin(credential.pin);
+      setKeepMemo(makeDefaultKeepMemo(credential.emailId, credential.pin));
+      setMaintenanceAutofillMessage('재정비 DB 자동 불러오기 완료 · 저장된 비밀번호/PIN/인증링크를 채웠어요.');
+      return true;
+    };
+
     // 이메일 별칭 선택 핸들러
     const handleSelectAlias = (alias: SlAlias) => {
       setSelectedAliasId(alias.id);
+      if (applyMaintenanceCredential(alias.id, alias.email)) return;
       setKeepAcct(alias.email);
+      setKeepPasswd('');
       // PIN: API 응답 → localStorage(sl_alias_pin_{id}) → 수동 입력값 순으로 폴백
       const lsPin = (() => { try { return localStorage.getItem(`sl_alias_pin_${alias.id}`) || ''; } catch { return ''; } })();
       const autoPin = alias.pin || lsPin || keepPin.trim();
@@ -380,6 +408,16 @@ export default function WritePage() {
 
         <div style={{ background: '#fff', borderRadius: 16, padding: 18, border: '1.5px solid #EDE9FE', boxShadow: '0 2px 12px rgba(167,139,250,0.08)', marginBottom: 14 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: '#1E1B4B', marginBottom: 14, display:"flex", alignItems:"center", gap:8 }}><KeySquare size={16} color="#A78BFA" /> 계정 정보</div>
+          {selectedAliasId && (
+            <button onClick={() => applyMaintenanceCredential(selectedAliasId)} style={{ ...btnStyle('#EDE9FE', '#7C3AED'), padding: '9px 12px', fontSize: 12, marginBottom: 10 }}>
+              재정비 DB 자동 불러오기
+            </button>
+          )}
+          {maintenanceAutofillMessage && (
+            <div style={{ background: maintenanceAutofillMessage.includes('완료') ? '#F0FDF4' : '#FFFBEB', borderRadius: 8, padding: '8px 10px', marginBottom: 10, fontSize: 11, color: maintenanceAutofillMessage.includes('완료') ? '#059669' : '#D97706' }}>
+              {maintenanceAutofillMessage}
+            </div>
+          )}
           <label style={labelStyle}>아이디 (이메일) *</label>
           <input value={keepAcct} onChange={e => setKeepAcct(e.target.value)} placeholder="example@email.com" style={inputStyle} />
           <label style={labelStyle}>비밀번호 *</label>
