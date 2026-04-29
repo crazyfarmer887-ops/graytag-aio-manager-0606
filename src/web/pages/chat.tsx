@@ -45,6 +45,8 @@ export default function ChatPage() {
   const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({});
   const [sidebarWidth, setSidebarWidth] = useState(400);
   const [resizing, setResizing] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+  const [unreadOnly, setUnreadOnly] = useState(false);
   const msgEndRef = useRef<HTMLDivElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const resizeRef = useRef<number>(400);
@@ -72,6 +74,15 @@ export default function ChatPage() {
     const root = document.getElementById('root');
     root?.classList.add('chat-fullscreen');
     return () => root?.classList.remove('chat-fullscreen');
+  }, []);
+
+  // 모바일에서는 목록/대화 화면을 한 번에 하나만 보여준다.
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 768px)');
+    const sync = () => setIsMobile(mq.matches);
+    sync();
+    mq.addEventListener('change', sync);
+    return () => mq.removeEventListener('change', sync);
   }, []);
 
   // 채팅방 목록 로드
@@ -165,6 +176,20 @@ export default function ChatPage() {
     loadMessages(room.chatRoomUuid, 1);
   };
 
+  const markRoomRead = async (room: ChatRoom) => {
+    const previous = rooms;
+    setRooms(prev => prev.map(r => r.chatRoomUuid === room.chatRoomUuid ? { ...r, lenderChatUnread: false } : r));
+    if (selectedRoom?.chatRoomUuid === room.chatRoomUuid) setSelectedRoom({ ...room, lenderChatUnread: false });
+    try {
+      const res = await fetch('/api/chat/mark-read', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chatRoomUuid: room.chatRoomUuid }) });
+      if (!res.ok) throw new Error('읽음 처리 실패');
+      setTimeout(() => loadRooms(), 400);
+    } catch (e: any) {
+      setRooms(previous);
+      alert(e.message || '읽음 처리 실패');
+    }
+  };
+
   const loadMore = () => {
     if (!selectedRoom || msgLoading) return;
     loadMessages(selectedRoom.chatRoomUuid, page + 1, true);
@@ -222,7 +247,8 @@ export default function ChatPage() {
   };
 
   const groupedRooms = () => {
-    const sorted = [...rooms].sort((a, b) => {
+    const sourceRooms = unreadOnly ? rooms.filter(r => r.lenderChatUnread) : rooms;
+    const sorted = [...sourceRooms].sort((a, b) => {
       if (a.lenderChatUnread && !b.lenderChatUnread) return -1;
       if (!a.lenderChatUnread && b.lenderChatUnread) return 1;
       return b.dealUsid.localeCompare(a.dealUsid);
@@ -416,10 +442,18 @@ export default function ChatPage() {
         <p style={{fontSize:11,color:"#9CA3AF",margin:"4px 0 0"}}>
           {rooms.length}개 · 미읽 {rooms.filter(r=>r.lenderChatUnread).length}개
         </p>
+        {isMobile&&<p style={{fontSize:10,color:'#A78BFA',margin:'4px 0 0',fontWeight:700}}>모바일 모드 · 방을 누르면 대화 화면으로 이동</p>}
       </div>
       <div style={{display:"flex",gap:8,padding:"10px 14px",borderBottom:"1px solid #EDE9FE",flexShrink:0}}>
+        <button onClick={()=>setUnreadOnly(v=>!v)}
+          style={{flex:1,fontSize:12,fontWeight:700,padding:"7px 0",borderRadius:8,background:unreadOnly?"#FEF3C7":"#F3F4F6",border:"none",cursor:"pointer",color:unreadOnly?"#B45309":"#6B7280"}}>
+          안읽음만 보기
+        </button>
         <button onClick={()=>{
-          rooms.filter(r=>r.lenderChatUnread).forEach(room=>{
+          if(!confirm(`안읽음 ${rooms.filter(r=>r.lenderChatUnread).length}개를 모두 읽음 처리할까요?`)) return;
+          const unreadRooms=rooms.filter(r=>r.lenderChatUnread);
+          setRooms(prev=>prev.map(r=>r.lenderChatUnread?{...r,lenderChatUnread:false}:r));
+          unreadRooms.forEach(room=>{
             fetch('/api/chat/mark-read',{method:'POST',headers:{'Content-Type':'application/json'},
               body:JSON.stringify({chatRoomUuid:room.chatRoomUuid})}).catch(()=>{});
           });
@@ -487,7 +521,7 @@ export default function ChatPage() {
                       </div>
                       <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4,flexShrink:0}}>
                         <div style={{fontSize:10,color:"#9CA3AF"}}>{formatTime(room.lastMessageTime||'')}</div>
-                        {room.lenderChatUnread&&<div style={{background:"#EF4444",color:"#fff",borderRadius:10,padding:"2px 6px",fontSize:9,fontWeight:700}}>NEW</div>}
+                        <div style={{background:room.lenderChatUnread?"#EF4444":"#F3F4F6",color:room.lenderChatUnread?"#fff":"#6B7280",borderRadius:10,padding:"2px 6px",fontSize:9,fontWeight:800}}>{room.lenderChatUnread?"안읽음":"읽음"}</div>
                       </div>
                     </button>
                   ))}
@@ -514,8 +548,8 @@ export default function ChatPage() {
       <div style={{flex:1,height:"100%",display:"flex",flexDirection:"column",minWidth:0}}>
         {/* 헤더 */}
         <div style={{padding:"14px 20px",borderBottom:"1px solid #F3F0FF",display:"flex",alignItems:"center",gap:12,flexShrink:0,background:"#fff"}}>
-          <button onClick={()=>setSelectedRoom(null)} style={{background:"none",border:"none",cursor:"pointer",padding:4,borderRadius:6,color:"#7C3AED"}}>
-            <ChevronLeft size={22}/>
+          <button onClick={()=>setSelectedRoom(null)} style={{background:"none",border:"none",cursor:"pointer",padding:4,borderRadius:6,color:"#7C3AED",display:"flex",alignItems:"center",gap:2,fontSize:12,fontWeight:800}}>
+            <ChevronLeft size={22}/> {isMobile&&"목록"}
           </button>
           <div style={{width:40,height:40,borderRadius:10,overflow:"hidden",background:"#EDE9FE",flexShrink:0}}>
             <img src={selectedRoom.borrowerThumbnail||''} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}
@@ -525,9 +559,10 @@ export default function ChatPage() {
             <div style={{fontSize:17,fontWeight:700,color:"#1E1B4B"}}>{selectedRoom.borrowerName}</div>
             <div style={{fontSize:11,color:"#9CA3AF",marginTop:2}}>{selectedRoom.productType} · {selectedRoom.statusName} · {selectedRoom.keepAcct}</div>
           </div>
+          {selectedRoom.lenderChatUnread&&<button onClick={()=>markRoomRead(selectedRoom)} style={{background:"#FEF3C7",border:"none",borderRadius:8,padding:"6px 10px",cursor:"pointer",fontSize:12,color:"#B45309",fontWeight:800,fontFamily:"inherit"}}>읽음 처리</button>}
           <button onClick={()=>loadMessages(selectedRoom.chatRoomUuid,1)}
             style={{background:"#EDE9FE",border:"none",borderRadius:8,padding:"6px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:4,fontSize:12,color:"#7C3AED",fontWeight:600,fontFamily:"inherit"}}>
-            <RefreshCw size={13}/> 새로고침
+            <RefreshCw size={13}/> {!isMobile&&"새로고침"}
           </button>
         </div>
 
@@ -557,7 +592,7 @@ export default function ChatPage() {
             }
             const isMe=msg.isOwned;
             return(
-              <div key={i} style={{alignSelf:isMe?"flex-end":"flex-start",maxWidth:"60%",display:"flex",flexDirection:"column",gap:4}}>
+              <div key={i} style={{alignSelf:isMe?"flex-end":"flex-start",maxWidth:isMobile?"88%":"60%",display:"flex",flexDirection:"column",gap:4}}>
                 <div style={{
                   background:isMe?"#7C3AED":"#fff",
                   color:isMe?"#fff":"#1E1B4B",
@@ -578,7 +613,7 @@ export default function ChatPage() {
         </div>
 
         {/* 입력 영역 */}
-        <div style={{padding:"12px 20px 16px",borderTop:"1px solid #EDE9FE",display:"flex",flexDirection:"column",gap:8,flexShrink:0,background:"#fff"}}>
+        <div style={{padding:isMobile?"10px 12px calc(12px + env(safe-area-inset-bottom))":"12px 20px 16px",borderTop:"1px solid #EDE9FE",display:"flex",flexDirection:"column",gap:8,flexShrink:0,background:"#fff"}}>
           <button onClick={handleAiReply} disabled={aiLoading||messages.length===0}
             style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,width:"100%",padding:"10px 0",borderRadius:12,
               background:aiLoading?"#EDE9FE":"linear-gradient(135deg,#818CF8,#A78BFA)",
@@ -613,24 +648,25 @@ export default function ChatPage() {
 
   // ── 메인 레이아웃 ────────────────────────────────────────────
 
+  const mobileChatHidden = isMobile && selectedRoom;
   const sidebar = (
-    <div style={{width:sidebarWidth,minWidth:300,maxWidth:640,borderRight:"1px solid #EDE9FE",
-      display:"flex",flexDirection:"column",background:"#FDFBFF",flexShrink:0,position:"relative"}}>
+    <div style={{width:isMobile?"100%":sidebarWidth,minWidth:isMobile?"100%":300,maxWidth:isMobile?"100%":640,borderRight:isMobile?"none":"1px solid #EDE9FE",
+      display:mobileChatHidden?"none":"flex",flexDirection:"column",background:"#FDFBFF",flexShrink:0,position:"relative"}}>
       <div style={{overflowY:"auto",flexShrink:0}}>
         {renderArPanel()}
         {renderNoticePanel()}
       </div>
       <div style={{flex:1,overflowY:"auto"}}>{renderSidebar()}</div>
       {/* 리사이즈 핸들 */}
-      <div onMouseDown={()=>setResizing(true)}
+      {!isMobile&&<div onMouseDown={()=>setResizing(true)}
         style={{position:"absolute",right:-3,top:0,bottom:0,width:6,cursor:"col-resize",
           background:resizing?"rgba(124,58,237,0.2)":"transparent",zIndex:10,
-          transition:"background 0.2s"}}/>
+          transition:"background 0.2s"}}/>}
     </div>
   );
 
   return (
-    <div style={{height:"100vh",display:"flex",background:"#fff",overflow:"hidden",userSelect:resizing?"none":"auto" as any}}>
+    <div style={{height:"100vh",display:"flex",background:"#fff",overflow:"hidden",userSelect:resizing?"none":"auto" as any,width:"100%"}}>
       {sidebar}
       {selectedRoom
         ? renderChat()

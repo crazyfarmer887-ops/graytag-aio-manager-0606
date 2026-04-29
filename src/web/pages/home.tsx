@@ -740,7 +740,7 @@ function PartyMaintenancePanel({ items, regeneratingPinKey, onUpdate, onRegenera
   );
 }
 
-function ChatAlertsPanel({ alerts, unreadAlerts, unreadCount, loading, updatedAt, error, onOpenChat }: { alerts: ChatAlertItem[]; unreadAlerts: ChatAlertItem[]; unreadCount: number; loading: boolean; updatedAt: string | null; error: string | null; onOpenChat: () => void }) {
+function ChatAlertsPanel({ alerts, unreadAlerts, unreadCount, loading, updatedAt, fromCache, rateLimited, hydrationFailedCount, error, onOpenChat }: { alerts: ChatAlertItem[]; unreadAlerts: ChatAlertItem[]; unreadCount: number; loading: boolean; updatedAt: string | null; fromCache: boolean; rateLimited: boolean; hydrationFailedCount: number; error: string | null; onOpenChat: () => void }) {
   return (
     <Card tone={unreadCount > 0 ? 'warning' : 'info'} style={{ marginBottom: 16 }}>
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, marginBottom:10 }}>
@@ -749,6 +749,11 @@ function ChatAlertsPanel({ alerts, unreadAlerts, unreadCount, loading, updatedAt
           <div>
             <div style={{ fontSize:14, fontWeight:900, color:'#1E1B4B' }}>실시간 채팅 알림</div>
             <div style={{ fontSize:10, color:'#9CA3AF', marginTop:2 }}>{updatedAt ? `${updatedAt} 갱신` : '구매자 문의를 확인하는 중'}</div>
+            <div style={{ display:'flex', gap:5, flexWrap:'wrap', marginTop:5 }}>
+              {fromCache && <span style={{ fontSize:9, fontWeight:900, color:'#92400E', background:'#FEF3C7', borderRadius:999, padding:'2px 6px' }}>캐시 표시중</span>}
+              {rateLimited && <span style={{ fontSize:9, fontWeight:900, color:'#B91C1C', background:'#FEE2E2', borderRadius:999, padding:'2px 6px' }}>최신화 지연</span>}
+              {hydrationFailedCount > 0 && <span style={{ fontSize:9, fontWeight:900, color:'#6B7280', background:'#F3F4F6', borderRadius:999, padding:'2px 6px' }}>내용 확인 필요 {hydrationFailedCount}</span>}
+            </div>
           </div>
         </div>
         <button onClick={onOpenChat} style={{ border:'none', borderRadius:999, padding:'6px 10px', background:'#EDE9FE', color:'#7C3AED', fontSize:11, fontWeight:800, cursor:'pointer', display:'flex', alignItems:'center', gap:5 }}>
@@ -772,8 +777,12 @@ function ChatAlertsPanel({ alerts, unreadAlerts, unreadCount, loading, updatedAt
           <div style={{ display:'flex', flexDirection:'column', gap:7 }}>
             {unreadAlerts.map(alert => (
               <div key={`unread-${alert.id}`} style={{ background:'#fff', border:'1px solid #FEF3C7', borderRadius:11, padding:'8px 9px' }}>
-                <div style={{ fontSize:11, fontWeight:900, color:'#1E1B4B', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{alert.buyerName} · {alert.serviceType}</div>
-                <div style={{ fontSize:11, color:'#6B21A8', marginTop:5, lineHeight:1.35, wordBreak:'break-word' }}>“{alert.message}”</div>
+                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8 }}>
+                  <div style={{ fontSize:11, fontWeight:900, color:'#1E1B4B', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{alert.buyerName} · {alert.serviceType}</div>
+                  <span style={{ fontSize:9, fontWeight:900, color:'#B45309', background:'#FEF3C7', borderRadius:999, padding:'2px 6px', flexShrink:0 }}>안읽음</span>
+                </div>
+                <div style={{ fontSize:10, color:'#9CA3AF', marginTop:4, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>계정 {alert.accountLabel} · 메시지 도착 {alert.timeLabel}</div>
+                <div style={{ fontSize:11, color:alert.missingMessage?'#B45309':'#6B21A8', marginTop:5, lineHeight:1.35, wordBreak:'break-word' }}>“{alert.message}”</div>
               </div>
             ))}
           </div>
@@ -790,11 +799,12 @@ function ChatAlertsPanel({ alerts, unreadAlerts, unreadCount, loading, updatedAt
               <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8 }}>
                 <div style={{ minWidth:0 }}>
                   <div style={{ fontSize:12, fontWeight:900, color:'#1E1B4B', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{alert.title}</div>
-                  <div style={{ fontSize:10, color:'#9CA3AF', marginTop:2, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{alert.productName}</div>
+                  <div style={{ fontSize:10, color:'#9CA3AF', marginTop:2, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>계정 {alert.accountLabel} · {alert.productName}</div>
+                  <div style={{ fontSize:10, color:'#9CA3AF', marginTop:2 }}>메시지 도착 {alert.timeLabel}</div>
                 </div>
-                {alert.unread && <span style={{ fontSize:9, fontWeight:900, color:'#B45309', background:'#FEF3C7', borderRadius:999, padding:'3px 7px', flexShrink:0 }}>NEW</span>}
+                <span style={{ fontSize:9, fontWeight:900, color:alert.missingMessage?'#B45309':alert.unread?'#B45309':'#6B7280', background:alert.missingMessage?'#FEF3C7':alert.unread?'#FEF3C7':'#F3F4F6', borderRadius:999, padding:'3px 7px', flexShrink:0 }}>{alert.missingMessage?'내용 확인 필요':alert.unread?'안읽음':'읽음'}</span>
               </div>
-              <div style={{ fontSize:11, color:'#6B21A8', marginTop:7, lineHeight:1.35, wordBreak:'break-word' }}>“{alert.message}”</div>
+              <div style={{ fontSize:11, color:alert.missingMessage?'#B45309':'#6B21A8', marginTop:7, lineHeight:1.35, wordBreak:'break-word' }}>“{alert.message}”</div>
             </div>
           ))}
         </div>
@@ -816,6 +826,9 @@ export default function HomePage() {
   const [chatUpdatedAt, setChatUpdatedAt] = useState<string | null>(null);
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
+  const [chatFromCache, setChatFromCache] = useState(false);
+  const [chatRateLimited, setChatRateLimited] = useState(false);
+  const [chatHydrationFailedCount, setChatHydrationFailedCount] = useState(0);
   const [partyMaintenanceChecklistStore, setPartyMaintenanceChecklistStore] = useState<PartyMaintenanceChecklistStore>({});
   const [regeneratingPinKey, setRegeneratingPinKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -886,7 +899,7 @@ export default function HomePage() {
     setChatError(null);
     try {
       const res = await fetch('/api/chat/rooms');
-      const json = await res.json() as { rooms?: ChatAlertRoom[]; unreadCount?: number; updatedAt?: string; error?: string };
+      const json = await res.json() as { rooms?: ChatAlertRoom[]; unreadCount?: number; updatedAt?: string; error?: string; fromCache?: boolean; rateLimited?: boolean; messageHydrationFailedCount?: number };
       if (!res.ok) throw new Error(json.error || '채팅 알림 조회 실패');
       const alerts = buildChatAlerts(json.rooms || [], 5);
       const unreadAlerts = buildUnreadChatAlerts(json.rooms || [], 5);
@@ -894,6 +907,9 @@ export default function HomePage() {
       setUnreadChatAlerts(unreadAlerts);
       setChatUnreadCount(json.unreadCount ?? unreadAlerts.length);
       setChatUpdatedAt(json.updatedAt ? formatShortTime(json.updatedAt) : formatShortTime(new Date().toISOString()));
+      setChatFromCache(Boolean(json.fromCache));
+      setChatRateLimited(Boolean(json.rateLimited));
+      setChatHydrationFailedCount(json.messageHydrationFailedCount ?? 0);
     } catch (e: any) {
       setChatError(e.message || '채팅 알림 조회 실패');
     } finally {
@@ -1132,6 +1148,9 @@ export default function HomePage() {
             unreadCount={chatUnreadCount}
             loading={chatLoading}
             updatedAt={chatUpdatedAt}
+            fromCache={chatFromCache}
+            rateLimited={chatRateLimited}
+            hydrationFailedCount={chatHydrationFailedCount}
             error={chatError}
             onOpenChat={() => navigate('/chat')}
           />

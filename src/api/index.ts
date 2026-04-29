@@ -1082,6 +1082,8 @@ app.get('/chat/rooms', async (c) => {
     }
 
     // 각 room의 lastMessage 가져오기 (병렬)
+    let messageHydratedCount = 0;
+    let messageHydrationFailedCount = 0;
     const roomsWithMessages = await Promise.all(allDeals
       .filter((d: any) => d.chatRoomUuid)
       .map(async (d: any) => {
@@ -1101,6 +1103,8 @@ app.get('/chat/rooms', async (c) => {
           keepAcct: d.keepAcct,
           lastMessage: undefined as string | undefined,
           lastMessageTime: undefined as string | undefined,
+          lastMessageFetchOk: false,
+          lastMessageMissingReason: undefined as string | undefined,
         };
 
         // 최신 메시지 조회 (첫 페이지만)
@@ -1113,17 +1117,26 @@ app.get('/chat/rooms', async (c) => {
             const msgData = await safeJson(msgResp);
             const messages = extractGraytagChats(msgData);
             const userMsg = findLatestBuyerInquiryMessage(messages);
+            room.lastMessageFetchOk = true;
             if (userMsg) {
+              messageHydratedCount += 1;
               room.lastMessage = userMsg.message
                 .replace(/<br\s*\/?>/gi, ' ')
                 .replace(/<[^>]+>/g, '')
                 .trim()
                 .slice(0, 50);
               room.lastMessageTime = userMsg.registeredDateTime || userMsg.createdAt || userMsg.updatedAt;
+            } else {
+              room.lastMessageMissingReason = 'no_buyer_message';
+              if (room.lenderChatUnread) messageHydrationFailedCount += 1;
             }
+          } else {
+            room.lastMessageMissingReason = `fetch_http_${msgResp.status}`;
+            if (room.lenderChatUnread) messageHydrationFailedCount += 1;
           }
-        } catch (e) {
-          // 실패해도 계속 진행
+        } catch (e: any) {
+          room.lastMessageMissingReason = e?.name === 'TimeoutError' ? 'timeout' : 'fetch_failed';
+          if (room.lenderChatUnread) messageHydrationFailedCount += 1;
         }
 
         return room;
@@ -1137,6 +1150,10 @@ app.get('/chat/rooms', async (c) => {
       totalRooms: rooms.length,
       unreadCount: rooms.filter((r: any) => r.lenderChatUnread).length,
       updatedAt: new Date().toISOString(),
+      fromCache: false,
+      rateLimited: false,
+      messageHydratedCount,
+      messageHydrationFailedCount,
     };
     _chatRoomsCache = result; // 캐시 저장
     return c.json(result);
@@ -2883,6 +2900,7 @@ app.post('/chat/mark-read', async (c) => {
 
     if (resp.ok) {
       const data = await safeJson(resp);
+      _chatRoomsCache = null;
       return c.json({ ok: true, ...data });
     } else {
       return c.json({ ok: false, error: `HTTP ${resp.status}` }, 500);

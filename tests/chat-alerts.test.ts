@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { buildChatAlerts, buildUnreadChatAlerts } from '../src/web/lib/chat-alerts';
+import { buildChatAlerts, buildUnreadChatAlerts, parseChatTime } from '../src/web/lib/chat-alerts';
 
 describe('chat alerts', () => {
   test('shows unread buyer inquiries first with buyer, service, product and message', () => {
@@ -24,9 +24,9 @@ describe('chat alerts', () => {
     expect(alerts[0].title).toContain('넷플릭스');
   });
 
-  test('limits and hides empty inquiry messages', () => {
+  test('limits and hides empty read inquiry messages', () => {
     const alerts = buildChatAlerts([
-      { dealUsid: '1', chatRoomUuid: 'a', borrowerName: '', productType: '웨이브', productName: '웨이브', lenderChatUnread: true, lastMessage: '' },
+      { dealUsid: '1', chatRoomUuid: 'a', borrowerName: '', productType: '웨이브', productName: '웨이브', lenderChatUnread: false, lastMessage: '' },
       { dealUsid: '2', chatRoomUuid: 'b', borrowerName: '구매자2', productType: '웨이브', productName: '웨이브', lenderChatUnread: true, lastMessage: '문의2' },
       { dealUsid: '3', chatRoomUuid: 'c', borrowerName: '구매자3', productType: '웨이브', productName: '웨이브', lenderChatUnread: true, lastMessage: '문의3' },
     ] as any, 1);
@@ -45,5 +45,41 @@ describe('chat alerts', () => {
     expect(alerts.map((item) => item.buyerName)).toEqual(['현우', '수진']);
     expect(alerts[0].message).toBe('프로필 이름 변경 가능해요?');
     expect(alerts.every((item) => item.unread)).toBe(true);
+  });
+
+  test('shows party manager context with account and readable message time', () => {
+    const alerts = buildChatAlerts([
+      {
+        dealUsid: '200', chatRoomUuid: 'room-account', borrowerName: '진다솔', productType: '티빙', productName: '티빙 프리미엄', keepAcct: 'gtwavve4', lenderChatUnread: true, lastMessage: '프로필 꽉 찼어요', lastMessageTime: '2026.04.28 20:39',
+      },
+    ] as any);
+
+    expect(alerts[0]).toMatchObject({
+      accountLabel: 'gtwavve4',
+      timeLabel: '4/28 20:39',
+      missingMessage: false,
+    });
+    expect(alerts[0].title).toContain('gtwavve4');
+  });
+
+  test('keeps unread rooms visible when latest message fetch failed', () => {
+    const alerts = buildUnreadChatAlerts([
+      { dealUsid: '300', chatRoomUuid: 'room-missing', borrowerName: '김지만', productType: '디즈니플러스', productName: '디즈니플러스 프리미엄', keepAcct: 'crazyfarmer@kakao.com', lenderChatUnread: true, lastMessage: null, lastMessageTime: null },
+    ] as any);
+
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0].missingMessage).toBe(true);
+    expect(alerts[0].message).toContain('내용을 불러오지 못했어요');
+    expect(alerts[0].accountLabel).toBe('crazyfarmer@kakao.com');
+  });
+
+  test('parses Graytag dotted dates and sorts unread rooms by message time', () => {
+    expect(parseChatTime('2026.04.28 20:39')).toBeGreaterThan(parseChatTime('2026.04.05 15:19'));
+    const alerts = buildUnreadChatAlerts([
+      { dealUsid: 'old', chatRoomUuid: 'old-room', borrowerName: '오래전', productType: '디즈니', productName: '디즈니', lenderChatUnread: true, lastMessage: '기본프로필이 없어요', lastMessageTime: '2026.04.05 15:19' },
+      { dealUsid: 'new', chatRoomUuid: 'new-room', borrowerName: '최근', productType: '티빙', productName: '티빙', lenderChatUnread: true, lastMessage: '프로필 꽉 찼어요', lastMessageTime: '2026.04.28 20:39' },
+    ] as any);
+
+    expect(alerts.map((item) => item.buyerName)).toEqual(['최근', '오래전']);
   });
 });
