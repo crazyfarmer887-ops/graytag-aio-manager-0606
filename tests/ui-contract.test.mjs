@@ -100,6 +100,7 @@ test('OTT home and navigation use the refreshed UI structure', () => {
   assert.match(manage, /배정된 프로필 이름/);
   assert.match(manage, /1인 1프로필 안내 3회 반복/);
   assert.match(manage, /fillProfileNickname/);
+  assert.match(manage, /generateUniqueProfileNicknames/);
   assert.match(manage, /전체 메꾸기 미리보기 필요/);
   assert.match(manage, /계정 생성/);
   assert.match(manage, /Email 대시보드 alias/);

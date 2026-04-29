@@ -67,6 +67,25 @@ export function generateProfileNickname(random = Math.random): string {
   return PROFILE_NICKNAME_DICTIONARY[index]?.name || PROFILE_NICKNAME_DICTIONARY[0].name;
 }
 
+export function generateUniqueProfileNicknames(count: number, preferredFirst = '', random = Math.random): string[] {
+  const max = Math.max(0, Math.min(count, PROFILE_NICKNAME_DICTIONARY.length));
+  const picked: string[] = [];
+  const seen = new Set<string>();
+  const first = isValidProfileNickname(preferredFirst) ? normalizeProfileNickname(preferredFirst) : '';
+  if (first) {
+    picked.push(first);
+    seen.add(first);
+  }
+  const start = Math.min(PROFILE_NICKNAME_DICTIONARY.length - 1, Math.floor(random() * PROFILE_NICKNAME_DICTIONARY.length));
+  for (let offset = 0; picked.length < max && offset < PROFILE_NICKNAME_DICTIONARY.length; offset++) {
+    const candidate = PROFILE_NICKNAME_DICTIONARY[(start + offset) % PROFILE_NICKNAME_DICTIONARY.length].name;
+    if (seen.has(candidate)) continue;
+    picked.push(candidate);
+    seen.add(candidate);
+  }
+  return picked;
+}
+
 export function normalizeProfileNickname(value: string): string {
   return value.replace(/[^가-힣]/g, '').slice(0, 4);
 }

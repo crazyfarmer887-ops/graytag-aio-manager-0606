@@ -3,7 +3,7 @@ import { CATEGORIES } from "../lib/constants";
 import { buildAccountSlotStates, dedupeRecruitingProducts, mergeRecruitingProducts, type SlotState } from "../lib/account-slots";
 import { removeRecruitingProductFromManageData } from "../lib/manage-optimistic";
 import { assertAutoDeliveryInput, buildAutoFillDeliveryMemo, buildFillProductModel, findExactPasswordForAccount, requireExactAliasMemoForAutoFill } from "../../lib/graytag-fill";
-import { generateProfileNickname, isValidProfileNickname, normalizeProfileNickname } from "../../lib/profile-nickname";
+import { generateProfileNickname, generateUniqueProfileNicknames, isValidProfileNickname, normalizeProfileNickname } from "../../lib/profile-nickname";
 import { buildProfileAuditRows, summarizeProfileAudit, type ProfileAuditRow, type ProfileAuditStore } from "../../lib/profile-audit";
 import { RefreshCw, KeyRound, Mail, ChevronDown, ChevronRight, TrendingUp, Loader2, AlertCircle, ExternalLink, Calendar, UserX, Megaphone, PlusCircle, X, UserPlus, Trash2, Activity, Wifi, WifiOff } from "lucide-react";
 
@@ -607,6 +607,7 @@ export default function ManagePage() {
     }
 
     const count = Math.max(1, Math.min(fillCount, fillModal.vacancy));
+    const profileNicknames = generateUniqueProfileNicknames(count, fillProfileNickname);
     let success = 0;
     const createdProducts: OnSaleProduct[] = [];
     const priceNum = fillFinalPrice;
@@ -618,6 +619,8 @@ export default function ManagePage() {
 
     for (let i = 0; i < count; i++) {
       try {
+        const usidProfileNickname = profileNicknames[i] || generateProfileNickname();
+        const usidMemo = buildAutoFillDeliveryMemo(usidProfileNickname, fillAliasStatus?.memo || fillKeepMemo);
         const productModel = buildFillProductModel({
           category: fillModal.category,
           endDate: toGraytagDate(fillEndDate),
@@ -634,14 +637,14 @@ export default function ManagePage() {
         }
 
         // keepAcct 설정
-        const deliveryInputError = assertAutoDeliveryInput({ keepAcct: fillModal.keepAcct, keepPasswd: fillModal.keepPasswd, keepMemo: fillKeepMemo });
+        const deliveryInputError = assertAutoDeliveryInput({ keepAcct: fillModal.keepAcct, keepPasswd: fillModal.keepPasswd, keepMemo: usidMemo });
         if (deliveryInputError) {
           setFillResult(`계정 자동전달 준비 실패: ${deliveryInputError}`);
           continue;
         }
         const keepBody = cs.id === AUTO_COOKIE_ID
-          ? { productUsid: json.productUsid, keepAcct: fillModal.keepAcct, keepPasswd: fillModal.keepPasswd, keepMemo: fillKeepMemo }
-          : { AWSALB: cs.AWSALB, AWSALBCORS: cs.AWSALBCORS, JSESSIONID: cs.JSESSIONID, productUsid: json.productUsid, keepAcct: fillModal.keepAcct, keepPasswd: fillModal.keepPasswd, keepMemo: fillKeepMemo };
+          ? { productUsid: json.productUsid, keepAcct: fillModal.keepAcct, keepPasswd: fillModal.keepPasswd, keepMemo: usidMemo }
+          : { AWSALB: cs.AWSALB, AWSALBCORS: cs.AWSALBCORS, JSESSIONID: cs.JSESSIONID, productUsid: json.productUsid, keepAcct: fillModal.keepAcct, keepPasswd: fillModal.keepPasswd, keepMemo: usidMemo };
         const keepRes = await fetch('/api/post/keepAcct', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(keepBody) });
         if (!keepRes.ok) {
           const keepJson = await keepRes.json().catch(() => ({})) as any;
@@ -658,7 +661,7 @@ export default function ManagePage() {
           remainderDays: fillCalcDays(),
           keepAcct: fillModal.keepAcct,
           keepPasswd: fillModal.keepPasswd,
-          keepMemo: fillKeepMemo,
+          keepMemo: usidMemo,
         });
         success++;
       } catch {}

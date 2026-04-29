@@ -3,6 +3,7 @@ import {
   buildProfileAssignment,
   buildProfileWarningMemo,
   generateProfileNickname,
+  generateUniqueProfileNicknames,
   isValidProfileNickname,
   PROFILE_NICKNAME_DICTIONARY,
 } from '../src/lib/profile-nickname';
@@ -23,6 +24,15 @@ describe('profile nickname assignment', () => {
     expect(nickname).toBe(PROFILE_NICKNAME_DICTIONARY[0].name);
     expect(Array.from(nickname).length).toBeGreaterThanOrEqual(3);
     expect(Array.from(nickname).length).toBeLessThanOrEqual(4);
+  });
+
+  test('generates distinct profile names for multiple fill registrations', () => {
+    const names = generateUniqueProfileNicknames(4, '수달이', () => 0);
+
+    expect(names).toHaveLength(4);
+    expect(names[0]).toBe('수달이');
+    expect(new Set(names).size).toBe(4);
+    for (const name of names) expect(isValidProfileNickname(name)).toBe(true);
   });
 
   test('validates manual nicknames as Korean 3-4 character names', () => {
