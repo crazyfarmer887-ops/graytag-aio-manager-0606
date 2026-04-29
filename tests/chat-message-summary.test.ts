@@ -16,4 +16,16 @@ describe('chat message summary', () => {
 
     expect(message?.message).toBe('<b>구매자 문의</b>');
   });
+
+  test('uses the newest real buyer text, not system 안내 messages or array order', () => {
+    const message = findLatestBuyerInquiryMessage([
+      { message: '예전 문의입니다', isInfo: false, isOwned: false, registeredDateTime: '2026.04.03 13:00' },
+      { message: '계정 정보가 전달되었습니다.\n구매확정 버튼을 눌러주세요.', informationMessage: true, owned: false, registeredDateTime: '2026.04.03 13:14' },
+      { message: '최근 구매자 실제 문의입니다', isInfo: false, isOwned: false, registeredDateTime: '2026.04.23 00:01' },
+      { message: '판매자 답변입니다', isInfo: false, isOwned: true, registeredDateTime: '2026.04.23 00:03' },
+      { message: '대여기간 종료일이 일주일 남았습니다.\n연장이 필요한 경우 상품을 구매해주세요!', registeredDateTime: '2026.04.24 00:01' },
+    ] as any);
+
+    expect(message?.message).toBe('최근 구매자 실제 문의입니다');
+  });
 });

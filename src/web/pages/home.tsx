@@ -741,14 +741,17 @@ function PartyMaintenancePanel({ items, regeneratingPinKey, onUpdate, onRegenera
 }
 
 function ChatAlertsPanel({ alerts, unreadAlerts, unreadCount, loading, updatedAt, fromCache, rateLimited, hydrationFailedCount, error, onOpenChat }: { alerts: ChatAlertItem[]; unreadAlerts: ChatAlertItem[]; unreadCount: number; loading: boolean; updatedAt: string | null; fromCache: boolean; rateLimited: boolean; hydrationFailedCount: number; error: string | null; onOpenChat: () => void }) {
+  const displayAlerts = unreadAlerts.length > 0 ? unreadAlerts : alerts;
   return (
     <Card tone={unreadCount > 0 ? 'warning' : 'info'} style={{ marginBottom: 16 }}>
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, marginBottom:10 }}>
-        <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+        <div style={{ display:'flex', alignItems:'center', gap:8, minWidth:0 }}>
           <Bell size={16} color={unreadCount > 0 ? '#F59E0B' : '#7C3AED'} />
-          <div>
+          <div style={{ minWidth:0 }}>
             <div style={{ fontSize:14, fontWeight:900, color:'#1E1B4B' }}>실시간 채팅 알림</div>
-            <div style={{ fontSize:10, color:'#9CA3AF', marginTop:2 }}>{updatedAt ? `${updatedAt} 갱신` : '구매자 문의를 확인하는 중'}</div>
+            <div style={{ fontSize:10, color:'#9CA3AF', marginTop:2 }}>
+              {unreadCount > 0 ? `안 읽은 구매자 문의 ${unreadCount}개` : '최근 실제 구매자 메시지'} · {updatedAt ? `${updatedAt} 갱신` : '확인 중'}
+            </div>
             <div style={{ display:'flex', gap:5, flexWrap:'wrap', marginTop:5 }}>
               {fromCache && <span style={{ fontSize:9, fontWeight:900, color:'#92400E', background:'#FEF3C7', borderRadius:999, padding:'2px 6px' }}>캐시 표시중</span>}
               {rateLimited && <span style={{ fontSize:9, fontWeight:900, color:'#B91C1C', background:'#FEE2E2', borderRadius:999, padding:'2px 6px' }}>최신화 지연</span>}
@@ -756,55 +759,28 @@ function ChatAlertsPanel({ alerts, unreadAlerts, unreadCount, loading, updatedAt
             </div>
           </div>
         </div>
-        <button onClick={onOpenChat} style={{ border:'none', borderRadius:999, padding:'6px 10px', background:'#EDE9FE', color:'#7C3AED', fontSize:11, fontWeight:800, cursor:'pointer', display:'flex', alignItems:'center', gap:5 }}>
+        <button onClick={onOpenChat} style={{ border:'none', borderRadius:999, padding:'6px 10px', background:'#EDE9FE', color:'#7C3AED', fontSize:11, fontWeight:800, cursor:'pointer', display:'flex', alignItems:'center', gap:5, flexShrink:0 }}>
           <MessageCircle size={13} /> 채팅 열기
         </button>
       </div>
-      <div style={{ display:'flex', gap:8, marginBottom:10 }}>
-        <div style={{ flex:1, background:'#FFF7ED', border:'1px solid #FED7AA', borderRadius:12, padding:'8px 10px' }}>
-          <div style={{ fontSize:17, fontWeight:950, color:'#F97316' }}>{unreadCount}</div>
-          <div style={{ fontSize:10, color:'#9CA3AF' }}>안 읽은 문의</div>
-        </div>
-        <div style={{ flex:1, background:'#F8F6FF', border:'1px solid #EDE9FE', borderRadius:12, padding:'8px 10px' }}>
-          <div style={{ fontSize:17, fontWeight:950, color:'#7C3AED' }}>{alerts.length}</div>
-          <div style={{ fontSize:10, color:'#9CA3AF' }}>최근 문의 표시</div>
-        </div>
+      <div style={{ fontSize:12, fontWeight:900, color:unreadAlerts.length > 0 ? '#92400E' : '#6B21A8', marginBottom:8 }}>
+        {unreadAlerts.length > 0 ? '안 읽은 문의 내용' : '최근 실제 구매자 메시지'}
       </div>
       {error && <div style={{ background:'#FFF0F0', color:'#EF4444', borderRadius:10, padding:'8px 10px', fontSize:11, marginBottom:8 }}>{error}</div>}
-      {unreadAlerts.length > 0 && (
-        <div style={{ background:'#FFFBEB', border:'1px solid #FDE68A', borderRadius:14, padding:'10px 11px', marginBottom:10 }}>
-          <div style={{ fontSize:12, fontWeight:900, color:'#92400E', marginBottom:8 }}>안 읽은 문의 내용</div>
-          <div style={{ display:'flex', flexDirection:'column', gap:7 }}>
-            {unreadAlerts.map(alert => (
-              <div key={`unread-${alert.id}`} style={{ background:'#fff', border:'1px solid #FEF3C7', borderRadius:11, padding:'8px 9px' }}>
-                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8 }}>
-                  <div style={{ fontSize:11, fontWeight:900, color:'#1E1B4B', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{alert.buyerName} · {alert.serviceType}</div>
-                  <span style={{ fontSize:9, fontWeight:900, color:'#B45309', background:'#FEF3C7', borderRadius:999, padding:'2px 6px', flexShrink:0 }}>안읽음</span>
-                </div>
-                <div style={{ fontSize:10, color:'#9CA3AF', marginTop:4, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>계정 {alert.accountLabel} · 메시지 도착 {alert.timeLabel}</div>
-                <div style={{ fontSize:11, color:alert.missingMessage?'#B45309':'#6B21A8', marginTop:5, lineHeight:1.35, wordBreak:'break-word' }}>“{alert.message}”</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      {loading && alerts.length === 0 ? (
+      {loading && displayAlerts.length === 0 ? (
         <div style={{ color:'#9CA3AF', fontSize:12, padding:'10px 0' }}>채팅 알림 조회중...</div>
-      ) : alerts.length === 0 ? (
+      ) : displayAlerts.length === 0 ? (
         <div style={{ color:'#9CA3AF', fontSize:12, padding:'10px 0' }}>새 구매자 문의가 없어요.</div>
       ) : (
-        <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-          {alerts.map(alert => (
-            <div key={alert.id} style={{ background: alert.unread ? '#FFFBEB' : '#FAFAFF', border:`1px solid ${alert.unread ? '#FDE68A' : '#EDE9FE'}`, borderRadius:13, padding:'10px 11px' }}>
+        <div style={{ display:'flex', flexDirection:'column', gap:7 }}>
+          {displayAlerts.map(alert => (
+            <div key={alert.id} style={{ background: alert.unread ? '#FFFBEB' : '#FAFAFF', border:`1px solid ${alert.unread ? '#FDE68A' : '#EDE9FE'}`, borderRadius:12, padding:'9px 10px' }}>
               <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8 }}>
-                <div style={{ minWidth:0 }}>
-                  <div style={{ fontSize:12, fontWeight:900, color:'#1E1B4B', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{alert.title}</div>
-                  <div style={{ fontSize:10, color:'#9CA3AF', marginTop:2, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>계정 {alert.accountLabel} · {alert.productName}</div>
-                  <div style={{ fontSize:10, color:'#9CA3AF', marginTop:2 }}>메시지 도착 {alert.timeLabel}</div>
-                </div>
-                <span style={{ fontSize:9, fontWeight:900, color:alert.missingMessage?'#B45309':alert.unread?'#B45309':'#6B7280', background:alert.missingMessage?'#FEF3C7':alert.unread?'#FEF3C7':'#F3F4F6', borderRadius:999, padding:'3px 7px', flexShrink:0 }}>{alert.missingMessage?'내용 확인 필요':alert.unread?'안읽음':'읽음'}</span>
+                <div style={{ fontSize:11, fontWeight:900, color:'#1E1B4B', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{alert.buyerName} · {alert.serviceType}</div>
+                <span style={{ fontSize:9, fontWeight:900, color:alert.missingMessage?'#B45309':alert.unread?'#B45309':'#6B7280', background:alert.missingMessage?'#FEF3C7':alert.unread?'#FEF3C7':'#F3F4F6', borderRadius:999, padding:'2px 6px', flexShrink:0 }}>{alert.missingMessage?'내용 확인 필요':alert.unread?'안읽음':'읽음'}</span>
               </div>
-              <div style={{ fontSize:11, color:alert.missingMessage?'#B45309':'#6B21A8', marginTop:7, lineHeight:1.35, wordBreak:'break-word' }}>“{alert.message}”</div>
+              <div style={{ fontSize:10, color:'#9CA3AF', marginTop:4, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>계정 {alert.accountLabel} · 메시지 도착 {alert.timeLabel}</div>
+              <div style={{ fontSize:12, color:alert.missingMessage?'#B45309':'#6B21A8', marginTop:6, lineHeight:1.4, wordBreak:'break-word' }}>“{alert.message}”</div>
             </div>
           ))}
         </div>

@@ -66,6 +66,7 @@ test('OTT home and navigation use the refreshed UI structure', () => {
   assert.doesNotMatch(home, /expired-party-checklists/);
   assert.match(home, /실시간 채팅 알림/);
   assert.match(home, /안 읽은 문의 내용/);
+  assert.match(home, /최근 실제 구매자 메시지/);
   assert.match(home, /메시지 도착/);
   assert.match(home, /계정/);
   assert.match(home, /내용 확인 필요/);
@@ -78,6 +79,9 @@ test('OTT home and navigation use the refreshed UI structure', () => {
   const chat = read('src/web/pages/chat.tsx');
   assert.match(chat, /isMobile/);
   assert.match(chat, /안읽음만 보기/);
+  assert.match(chat, /구매자 메시지 최신순/);
+  assert.match(chat, /계정별 정리/);
+  assert.match(chat, /useState<ChatSortMode>\('latest'\)/);
   assert.match(chat, /읽음 처리/);
   assert.match(chat, /목록/);
   assert.match(chat, /mobileChatHidden/);

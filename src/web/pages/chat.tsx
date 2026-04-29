@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { MessageCircle, RefreshCw, Loader2, Send, ChevronLeft, ArrowDown, Sparkles, ChevronDown, Bell, Settings, ToggleLeft, ToggleRight } from "lucide-react";
 import { autoReplyStatusLabel, autoReplyStatusTone, summarizeAutoReplyJobs, type AutoReplyLogJob } from "../lib/auto-reply-log";
+import { groupChatRoomsByAccount, sortChatRoomsByLatestBuyerMessage, type ChatSortMode } from "../lib/chat-room-sort";
 
 interface ChatRoom {
   dealUsid: string; chatRoomUuid: string; borrowerName: string;
@@ -47,6 +48,7 @@ export default function ChatPage() {
   const [resizing, setResizing] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [unreadOnly, setUnreadOnly] = useState(false);
+  const [chatSortMode, setChatSortMode] = useState<ChatSortMode>('latest');
   const msgEndRef = useRef<HTMLDivElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const resizeRef = useRef<number>(400);
@@ -246,23 +248,12 @@ export default function ChatPage() {
     return date.toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' });
   };
 
-  const groupedRooms = () => {
+  const visibleRooms = () => {
     const sourceRooms = unreadOnly ? rooms.filter(r => r.lenderChatUnread) : rooms;
-    const sorted = [...sourceRooms].sort((a, b) => {
-      if (a.lenderChatUnread && !b.lenderChatUnread) return -1;
-      if (!a.lenderChatUnread && b.lenderChatUnread) return 1;
-      return b.dealUsid.localeCompare(a.dealUsid);
-    });
-    const groups: Record<string, Record<string, ChatRoom[]>> = {};
-    for (const room of sorted) {
-      const svc = room.productType || '기타';
-      const acct = room.keepAcct || '(직접전달)';
-      if (!groups[svc]) groups[svc] = {};
-      if (!groups[svc][acct]) groups[svc][acct] = [];
-      groups[svc][acct].push(room);
-    }
-    return groups;
+    return sortChatRoomsByLatestBuyerMessage(sourceRooms);
   };
+
+  const groupedRooms = () => groupChatRoomsByAccount(visibleRooms());
 
   // 자동응답 액션
   const toggleAr = async () => {
@@ -433,6 +424,34 @@ export default function ChatPage() {
     </div>
   );
 
+  const renderRoomButton = (room: ChatRoom, nested = false) => (
+    <button key={room.dealUsid} onClick={()=>selectRoom(room)}
+      style={{width:"100%",padding:"12px 16px 12px "+(nested?"44px":"16px"),display:"flex",alignItems:"center",gap:12,
+        background:selectedRoom?.dealUsid===room.dealUsid?"#EDE9FE":room.lenderChatUnread?"#F5F3FF":"transparent",
+        border:"none",cursor:"pointer",borderBottom:"1px solid #F8F6FF",fontFamily:"inherit",transition:"background 0.15s"}}>
+      <div style={{width:38,height:38,borderRadius:10,flexShrink:0,overflow:"hidden",background:"#EDE9FE",position:"relative"}}>
+        <img src={room.borrowerThumbnail||''} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}
+          onError={(e)=>{(e.target as HTMLImageElement).style.display="none";}}/>
+        <div style={{position:"absolute",bottom:0,right:0,width:10,height:10,borderRadius:"50%",
+          background:STATUS_COLORS[room.dealStatus]||"#9CA3AF",border:"2px solid #fff"}}/>
+      </div>
+      <div style={{flex:1,minWidth:0,textAlign:"left"}}>
+        <div style={{fontSize:13,fontWeight:room.lenderChatUnread?700:500,color:"#1E1B4B",
+          overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+          {room.borrowerName}
+        </div>
+        <div style={{fontSize:11,color:"#9CA3AF",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:2}}>
+          {room.lastMessage?stripHtml(room.lastMessage).slice(0,32):"메시지 없음"}
+        </div>
+        {chatSortMode==='latest'&&<div style={{fontSize:10,color:'#C4B5FD',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',marginTop:2}}>{room.productType} · {room.keepAcct || '(직접전달)'}</div>}
+      </div>
+      <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4,flexShrink:0}}>
+        <div style={{fontSize:10,color:"#9CA3AF"}}>{formatTime(room.lastMessageTime||'')}</div>
+        <div style={{background:room.lenderChatUnread?"#EF4444":"#F3F4F6",color:room.lenderChatUnread?"#fff":"#6B7280",borderRadius:10,padding:"2px 6px",fontSize:9,fontWeight:800}}>{room.lenderChatUnread?"안읽음":"읽음"}</div>
+      </div>
+    </button>
+  );
+
   // ── 사이드바 ─────────────────────────────────────────────────
 
   const renderSidebar = () => (
@@ -443,6 +462,16 @@ export default function ChatPage() {
           {rooms.length}개 · 미읽 {rooms.filter(r=>r.lenderChatUnread).length}개
         </p>
         {isMobile&&<p style={{fontSize:10,color:'#A78BFA',margin:'4px 0 0',fontWeight:700}}>모바일 모드 · 방을 누르면 대화 화면으로 이동</p>}
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,padding:"10px 14px 0",flexShrink:0}}>
+        <button onClick={()=>setChatSortMode('latest')}
+          style={{fontSize:12,fontWeight:800,padding:"8px 0",borderRadius:9,background:chatSortMode==='latest'?"#7C3AED":"#F3F4F6",border:"none",cursor:"pointer",color:chatSortMode==='latest'?"#fff":"#6B7280"}}>
+          구매자 메시지 최신순
+        </button>
+        <button onClick={()=>setChatSortMode('account')}
+          style={{fontSize:12,fontWeight:800,padding:"8px 0",borderRadius:9,background:chatSortMode==='account'?"#7C3AED":"#F3F4F6",border:"none",cursor:"pointer",color:chatSortMode==='account'?"#fff":"#6B7280"}}>
+          계정별 정리
+        </button>
       </div>
       <div style={{display:"flex",gap:8,padding:"10px 14px",borderBottom:"1px solid #EDE9FE",flexShrink:0}}>
         <button onClick={()=>setUnreadOnly(v=>!v)}
@@ -468,7 +497,11 @@ export default function ChatPage() {
           {loading?<Loader2 size={12} style={{animation:"spin 1s linear infinite"}}/>:"새로고침"}
         </button>
       </div>
-      {Object.entries(groupedRooms()).map(([svc,acctGroups])=>{
+      {chatSortMode==='latest' ? (
+        <div>
+          {visibleRooms().map(room => renderRoomButton(room, false))}
+        </div>
+      ) : Object.entries(groupedRooms()).map(([svc,acctGroups])=>{
         const unread=Object.values(acctGroups).flat().filter(r=>r.lenderChatUnread).length;
         const expanded=expandedCategories[svc]!==false;
         return(
@@ -499,32 +532,7 @@ export default function ChatPage() {
                       {acctUnread>0&&<span style={{background:"#FCA5A5",color:"#fff",borderRadius:10,padding:"1px 5px",fontSize:9,fontWeight:700,flexShrink:0}}>{acctUnread}</span>}
                     </button>
                   )}
-                  {acctExpanded&&acctRooms.map(room=>(
-                    <button key={room.dealUsid} onClick={()=>selectRoom(room)}
-                      style={{width:"100%",padding:"12px 16px 12px "+(showSubHeader?"44px":"16px"),display:"flex",alignItems:"center",gap:12,
-                        background:selectedRoom?.dealUsid===room.dealUsid?"#EDE9FE":room.lenderChatUnread?"#F5F3FF":"transparent",
-                        border:"none",cursor:"pointer",borderBottom:"1px solid #F8F6FF",fontFamily:"inherit",transition:"background 0.15s"}}>
-                      <div style={{width:38,height:38,borderRadius:10,flexShrink:0,overflow:"hidden",background:"#EDE9FE",position:"relative"}}>
-                        <img src={room.borrowerThumbnail||''} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}
-                          onError={(e)=>{(e.target as HTMLImageElement).style.display="none";}}/>
-                        <div style={{position:"absolute",bottom:0,right:0,width:10,height:10,borderRadius:"50%",
-                          background:STATUS_COLORS[room.dealStatus]||"#9CA3AF",border:"2px solid #fff"}}/>
-                      </div>
-                      <div style={{flex:1,minWidth:0,textAlign:"left"}}>
-                        <div style={{fontSize:13,fontWeight:room.lenderChatUnread?700:500,color:"#1E1B4B",
-                          overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                          {room.borrowerName}
-                        </div>
-                        <div style={{fontSize:11,color:"#9CA3AF",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:2}}>
-                          {room.lastMessage?stripHtml(room.lastMessage).slice(0,32):"메시지 없음"}
-                        </div>
-                      </div>
-                      <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4,flexShrink:0}}>
-                        <div style={{fontSize:10,color:"#9CA3AF"}}>{formatTime(room.lastMessageTime||'')}</div>
-                        <div style={{background:room.lenderChatUnread?"#EF4444":"#F3F4F6",color:room.lenderChatUnread?"#fff":"#6B7280",borderRadius:10,padding:"2px 6px",fontSize:9,fontWeight:800}}>{room.lenderChatUnread?"안읽음":"읽음"}</div>
-                      </div>
-                    </button>
-                  ))}
+                  {acctExpanded&&acctRooms.map(room=>renderRoomButton(room, showSubHeader))}
                 </div>
               );
             })}
