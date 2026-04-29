@@ -14,7 +14,38 @@ export interface GeneratedAccount {
   source: 'account-generator';
 }
 
+export interface SimpleLoginAliasRef {
+  id?: number | string;
+  email: string;
+}
+
 export type GeneratedAccountStore = Record<string, GeneratedAccount>;
+
+export function extractSimpleLoginAliasRef(data: any): SimpleLoginAliasRef | null {
+  const candidate = data?.alias ?? data?.data?.alias ?? data;
+  if (typeof candidate === 'string') {
+    const email = normalizeGeneratedAccountEmail(candidate);
+    return email.includes('@') ? { email } : null;
+  }
+  if (!candidate || typeof candidate !== 'object') return null;
+
+  const rawEmail = candidate.email
+    ?? candidate.address
+    ?? candidate.mailbox
+    ?? candidate.alias
+    ?? data?.email
+    ?? data?.address;
+  const email = normalizeGeneratedAccountEmail(String(rawEmail || ''));
+  if (!email.includes('@')) return null;
+
+  const id = candidate.id
+    ?? candidate.alias_id
+    ?? candidate.aliasId
+    ?? data?.id
+    ?? data?.alias_id
+    ?? data?.aliasId;
+  return id === undefined || id === null || id === '' ? { email } : { id, email };
+}
 
 export function normalizeGeneratedAccountEmail(email: string): string {
   return String(email || '').trim().toLowerCase();

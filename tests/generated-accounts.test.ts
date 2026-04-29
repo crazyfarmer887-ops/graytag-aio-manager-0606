@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { buildGeneratedAccount, generateAccountPassword, generatedAccountKey, mergeGeneratedAccountsIntoManagement, normalizeGeneratedAccountPatch } from '../src/lib/generated-accounts';
+import { buildGeneratedAccount, extractSimpleLoginAliasRef, generateAccountPassword, generatedAccountKey, mergeGeneratedAccountsIntoManagement, normalizeGeneratedAccountPatch } from '../src/lib/generated-accounts';
 
 describe('generated accounts', () => {
   test('generates a 10 character password with lowercase start, digit, and symbol', () => {
@@ -47,5 +47,12 @@ describe('generated accounts', () => {
   test('normalizes paid/pending payment checkbox patches', () => {
     expect(normalizeGeneratedAccountPatch({ paymentStatus: 'paid', paidAt: '2026-04-29T12:00:00.000Z' })).toEqual({ paymentStatus: 'paid', paidAt: '2026-04-29T12:00:00.000Z' });
     expect(normalizeGeneratedAccountPatch({ paymentStatus: 'pending' })).toEqual({ paymentStatus: 'pending', paidAt: null });
+  });
+
+  test('extracts SimpleLogin alias refs from random alias response shapes', () => {
+    expect(extractSimpleLoginAliasRef({ alias: 'NewAlias@Example.com' })).toEqual({ email: 'newalias@example.com' });
+    expect(extractSimpleLoginAliasRef({ alias: { id: 123, email: 'Alias@Id.test' } })).toEqual({ id: 123, email: 'alias@id.test' });
+    expect(extractSimpleLoginAliasRef({ data: { alias: { alias_id: 'abc', address: 'Nested@Example.com' } } })).toEqual({ id: 'abc', email: 'nested@example.com' });
+    expect(extractSimpleLoginAliasRef({ alias: 'not-an-email' })).toBeNull();
   });
 });
