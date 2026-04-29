@@ -8,7 +8,7 @@ import { sendSellerAlert } from '../alerts/telegram';
 import { appendAuditLog, auditRequestId, readAuditLog } from './audit-log';
 import { assertPriceChangeAllowed, loadPriceSafetyConfig, previewPriceChange, recordSuccessfulPriceDecrease, savePriceSafetyConfig } from './price-safety';
 import { loadSafeModeConfig, saveSafeModeConfig } from './safe-mode';
-import { generateSixDigitPin, resolveEmailAliasFill, updateEmailAliasPin, verifyEmailAliasPinUpdate } from './email-alias-fill';
+import { generateSixDigitPin, makeEmailVerifyMemo, resolveEmailAliasFill, updateEmailAliasPin, verifyEmailAliasPinUpdate } from './email-alias-fill';
 import { buildFinishedDealsUrl } from '../lib/graytag-fill';
 import { planUndercutterPriceChange } from '../lib/undercutter-price';
 import { DEFAULT_MANAGEMENT_CACHE_TTL_MS, isAutoSessionManagementRequest, managementCache, shouldForceManagementRefresh } from './management-cache';
@@ -18,6 +18,7 @@ import { checkNetflixProfiles, fetchNetflixEmailCodeViaEmailServer } from './net
 import { extractGraytagChats, findLatestBuyerInquiryMessage } from './chat-message-summary';
 import { mergePartyMaintenanceChecklistState, type PartyMaintenanceChecklistStore } from '../lib/party-maintenance-checklist';
 import { buildProfileAssignment, type ProfileAssignment } from '../lib/profile-nickname';
+import { buildGeneratedAccount, generateAccountPassword, mergeGeneratedAccountsIntoManagement, normalizeGeneratedAccountPatch, type GeneratedAccountStore } from '../lib/generated-accounts';
 import { resolveAutoReplyPolicy } from './auto-reply-policy';
 import { normalizeBuyerMessage, messageFingerprint, messageTimestamp, isBuyerTextMessage } from './auto-reply-message';
 import { createAutoReplyJob, listAutoReplyJobs, loadAutoReplyJobStore, saveAutoReplyJobStore, updateAutoReplyJob, type AutoReplyJobStore } from './auto-reply-jobs';
@@ -45,6 +46,7 @@ const ADMIN_REQUIRED_GET_PREFIXES = [
   '/profile-audit',
   '/party-maintenance-checklists',
   '/profile-assignments',
+  '/generated-accounts',
 ];
 
 function normalizedApiPath(path: string): string {
@@ -167,6 +169,9 @@ function maskSecret(value: string): string {
 
 // ─── Session Keeper 쿠키 자동 로드 ─────────────────────────
 const SESSION_COOKIE_PATH = '/home/ubuntu/graytag-session/cookies.json';
+const GENERATED_ACCOUNTS_PATH = '/home/ubuntu/.hermes/hermes-agent/graytag-aio-manager-0606/data/generated-accounts.json';
+const EMAIL_DASHBOARD_ENV_PATH = '/home/ubuntu/.hermes/hermes-agent/graytag-email-verify-dashboard-5588/.env';
+const SIMPLELOGIN_API = 'https://app.simplelogin.io/api';
 
 function loadSessionCookies(): { AWSALB: string; AWSALBCORS: string; JSESSIONID: string } | null {
   try {
@@ -197,6 +202,64 @@ function buildCookieStr(cookies: { AWSALB: string; AWSALBCORS: string; JSESSIONI
     cookies.AWSALBCORS ? `AWSALBCORS=${cookies.AWSALBCORS}` : '',
     `JSESSIONID=${cookies.JSESSIONID}`,
   ].filter(Boolean).join('; ');
+}
+
+function dataDirFor(path: string) {
+  return path.replace(/\/[^/]+$/, '');
+}
+
+function readGeneratedAccountStore(): GeneratedAccountStore {
+  try {
+    if (!existsSync(GENERATED_ACCOUNTS_PATH)) return {};
+    const parsed = JSON.parse(readFileSync(GENERATED_ACCOUNTS_PATH, 'utf8')) as GeneratedAccountStore;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch { return {}; }
+}
+
+function writeGeneratedAccountStore(store: GeneratedAccountStore) {
+  const dir = dataDirFor(GENERATED_ACCOUNTS_PATH);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  writeFileSync(GENERATED_ACCOUNTS_PATH, JSON.stringify(store, null, 2), 'utf8');
+}
+
+function readEnvValueFromFile(path: string, key: string): string {
+  try {
+    if (!existsSync(path)) return '';
+    for (const rawLine of readFileSync(path, 'utf8').split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith('#') || !line.includes('=')) continue;
+      const eq = line.indexOf('=');
+      const name = line.slice(0, eq).trim();
+      if (name !== key) continue;
+      let value = line.slice(eq + 1).trim();
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
+      return value;
+    }
+  } catch { /* ignore */ }
+  return '';
+}
+
+function simpleLoginApiKey(): string {
+  return process.env.SIMPLELOGIN_API_KEY?.trim()
+    || readEnvValueFromFile(EMAIL_DASHBOARD_ENV_PATH, 'SIMPLELOGIN_API_KEY').trim();
+}
+
+async function createSimpleLoginRandomAlias(input: { serviceType: string; note: string }) {
+  const key = simpleLoginApiKey();
+  if (!key) throw new Error('SIMPLELOGIN_API_KEY가 AIO 또는 이메일 대시보드 환경에 없어요.');
+  const url = new URL('/api/alias/random/new', SIMPLELOGIN_API);
+  url.searchParams.set('hostname', 'graytag-account-generator');
+  url.searchParams.set('mode', 'word');
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { Authentication: key, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ note: input.note }),
+  });
+  const data = await res.json().catch(() => ({} as any)) as any;
+  if (!res.ok) throw new Error(data?.error || data?.message || `SimpleLogin alias 생성 실패 (${res.status})`);
+  const alias = data?.alias || data;
+  if (!alias?.id || !alias?.email) throw new Error('SimpleLogin 응답에 alias id/email이 없어요.');
+  return { id: alias.id as string | number, email: String(alias.email) };
 }
 
 // ─── 세션 쿠키 조회 엔드포인트 (프론트에서 자동 쿠키 상태 확인용) ───
@@ -511,6 +574,51 @@ app.post('/my/accounts', async (c) => {
   } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
+// ─── 계정 생성기: SimpleLogin alias + 비밀번호 + PIN + 결제 체크 ─────
+app.get('/generated-accounts', (c) => {
+  const store = readGeneratedAccountStore();
+  return c.json({ accounts: Object.values(store).sort((a, b) => b.createdAt.localeCompare(a.createdAt)) });
+});
+
+app.post('/generated-accounts/create', async (c) => {
+  const body = await c.req.json().catch(() => ({} as any)) as any;
+  const serviceType = String(body?.serviceType || '').trim();
+  if (!serviceType) return c.json({ error: 'serviceType이 필요합니다' }, 400);
+
+  try {
+    const now = new Date().toISOString();
+    const pin = generateSixDigitPin();
+    const password = generateAccountPassword();
+    const alias = await createSimpleLoginRandomAlias({
+      serviceType,
+      note: `[Graytag 계정 생성기] ${serviceType} · ${now}`,
+    });
+    const memo = makeEmailVerifyMemo(alias.id, pin);
+    const pinResult = await updateEmailAliasPin({ accountEmail: alias.email, serviceType, aliases: [{ id: alias.id, email: alias.email, enabled: true }], pin }, now);
+    if (!pinResult.ok) return c.json({ error: pinResult.message || 'PIN 저장 실패', detail: pinResult }, 500);
+
+    const account = buildGeneratedAccount({ serviceType, alias, password, pin, memo, now });
+    const store = readGeneratedAccountStore();
+    store[account.id] = account;
+    writeGeneratedAccountStore(store);
+    return c.json({ ok: true, account });
+  } catch (e: any) {
+    return c.json({ error: e?.message || '계정 생성 실패' }, 500);
+  }
+});
+
+app.patch('/generated-accounts/:id', async (c) => {
+  const { id } = c.req.param();
+  const body = await c.req.json().catch(() => ({} as any)) as any;
+  const store = readGeneratedAccountStore();
+  const account = store[id];
+  if (!account) return c.json({ error: '생성 계정을 찾지 못했어요' }, 404);
+  const patch = normalizeGeneratedAccountPatch(body);
+  store[id] = { ...account, ...patch };
+  writeGeneratedAccountStore(store);
+  return c.json({ ok: true, account: store[id] });
+});
+
 // 계정 관리 - 서비스별 > 상품별 > 파티원 + 수입 통계
 app.post('/my/management', async (c) => {
   const body = await c.req.json() as any;
@@ -745,7 +853,8 @@ app.post('/my/management', async (c) => {
       }
     }
 
-    return {
+    const generatedStore = readGeneratedAccountStore();
+    const management = {
       services,
       onSaleByKeepAcct,
       summary: {
@@ -758,6 +867,7 @@ app.post('/my/management', async (c) => {
       cookieSource: body?.JSESSIONID?.trim() ? 'manual' : 'session-keeper',
       updatedAt: new Date().toISOString(),
     };
+    return mergeGeneratedAccountsIntoManagement(management, generatedStore);
   };
 
   try {

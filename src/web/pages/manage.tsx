@@ -20,6 +20,15 @@ interface Member {
 interface Account {
   email: string; serviceType: string; members: Member[]; usingCount: number;
   activeCount: number; totalSlots: number; totalIncome: number; totalRealizedIncome: number; expiryDate: string | null; keepPasswd?: string;
+  generatedAccount?: {
+    id: string;
+    createdAt: string;
+    paymentStatus: 'pending' | 'paid';
+    paidAt: string | null;
+    emailId: number | string;
+    pin: string;
+    memo: string;
+  };
 }
 interface ServiceGroup { serviceType: string; accounts: Account[]; totalUsingMembers: number; totalActiveMembers: number; totalIncome: number; totalRealized: number; }
 interface ManageData {
@@ -308,6 +317,9 @@ export default function ManagePage() {
   // ─── 세션 상태 모니터링 ────────────────────────────
   const [sessionStatus, setSessionStatus] = useState<any>(null);
   const [sessionLoading, setSessionLoading] = useState(false);
+  const [accountCreateService, setAccountCreateService] = useState('넷플릭스');
+  const [accountCreateLoading, setAccountCreateLoading] = useState(false);
+  const [accountCreateResult, setAccountCreateResult] = useState<string|null>(null);
 
   const fetchSessionStatus = async () => {
     try {
@@ -324,6 +336,52 @@ export default function ManagePage() {
       const json = await res.json() as any;
       setManualMembers(json.members || []);
     } catch {}
+  };
+
+  const handleCreateGeneratedAccount = async () => {
+    if (!accountCreateService || accountCreateLoading) return;
+    setAccountCreateLoading(true); setAccountCreateResult(null);
+    try {
+      const res = await fetch('/api/generated-accounts/create', {
+        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ serviceType: accountCreateService }),
+      });
+      const json = await res.json() as any;
+      if (!res.ok || !json.account) throw new Error(json.error || '계정 생성 실패');
+      setAccountCreateResult(`${json.account.email} 생성 완료 · 결제 체크 대기`);
+      await doFetch();
+    } catch (e: any) { setAccountCreateResult(`오류: ${e.message}`); }
+    finally { setAccountCreateLoading(false); }
+  };
+
+  const toggleGeneratedAccountPaid = async (acct: Account, paid: boolean) => {
+    if (!acct.generatedAccount) return;
+    const previous = acct.generatedAccount.paymentStatus;
+    setData(prev => prev ? {
+      ...prev,
+      services: prev.services.map(s => ({
+        ...s,
+        accounts: s.accounts.map(a => a.generatedAccount?.id === acct.generatedAccount?.id
+          ? { ...a, generatedAccount: { ...a.generatedAccount!, paymentStatus: paid ? 'paid' : 'pending', paidAt: paid ? new Date().toISOString() : null } }
+          : a),
+      })),
+    } : prev);
+    try {
+      const res = await fetch(`/api/generated-accounts/${encodeURIComponent(acct.generatedAccount.id)}`, {
+        method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ paymentStatus: paid ? 'paid' : 'pending' }),
+      });
+      if (!res.ok) throw new Error('결제 체크 저장 실패');
+    } catch (e: any) {
+      setAccountCreateResult(`오류: ${e.message}`);
+      setData(prev => prev ? {
+        ...prev,
+        services: prev.services.map(s => ({
+          ...s,
+          accounts: s.accounts.map(a => a.generatedAccount?.id === acct.generatedAccount?.id
+            ? { ...a, generatedAccount: { ...a.generatedAccount!, paymentStatus: previous, paidAt: previous === 'paid' ? a.generatedAccount!.paidAt : null } }
+            : a),
+        })),
+      } : prev);
+    }
   };
 
   useEffect(() => {
@@ -770,6 +828,32 @@ export default function ManagePage() {
             </div>
           </div>
 
+          {/* 계정 생성 컴포넌트 */}
+          <div style={{ background:'linear-gradient(135deg,#FFF7ED 0%,#FDF2F8 45%,#EEF2FF 100%)', border:'1.5px solid #FED7AA', borderRadius:20, padding:16, marginBottom:14, boxShadow:'0 8px 24px rgba(251,146,60,0.10)' }}>
+            <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:10, marginBottom:12 }}>
+              <div>
+                <div style={{ display:'flex', alignItems:'center', gap:7, fontSize:15, fontWeight:900, color:'#1E1B4B' }}><KeyRound size={16} color="#F97316" /> 계정 생성</div>
+                <div style={{ fontSize:11, color:'#9CA3AF', marginTop:4, lineHeight:1.35 }}>Email 대시보드 alias + 비밀번호 + 6자리 PIN을 새로 만들고, 기존 이메일은 제외해서 생성 계정만 따로 표시해요.</div>
+              </div>
+              <span style={{ flexShrink:0, fontSize:10, fontWeight:900, color:'#C2410C', background:'#FFEDD5', borderRadius:999, padding:'4px 9px' }}>생성 전용</span>
+            </div>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr auto', gap:8 }}>
+              <select value={accountCreateService} onChange={e => setAccountCreateService(e.target.value)} disabled={accountCreateLoading}
+                style={{ border:'1.5px solid #FED7AA', borderRadius:12, padding:'10px 12px', fontFamily:'inherit', fontSize:13, fontWeight:800, color:'#1E1B4B', background:'#fff' }}>
+                {CATEGORIES.map(cat => <option key={cat.label} value={cat.label}>{cat.label}</option>)}
+              </select>
+              <button onClick={handleCreateGeneratedAccount} disabled={accountCreateLoading}
+                style={{ border:'none', borderRadius:12, padding:'10px 14px', background:accountCreateLoading?'#FDBA74':'#F97316', color:'#fff', fontSize:12, fontWeight:900, cursor:accountCreateLoading?'not-allowed':'pointer', display:'flex', alignItems:'center', gap:6 }}>
+                {accountCreateLoading ? <Loader2 size={14} style={{ animation:'spin 1s linear infinite' }} /> : <PlusCircle size={14} />}
+                {accountCreateLoading ? '생성중' : '새 계정 생성'}
+              </button>
+            </div>
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:6, marginTop:10 }}>
+              {['이메일 자동 생성', '비밀번호 자동 생성', 'PIN 자동 생성'].map(label => <div key={label} style={{ background:'rgba(255,255,255,0.72)', borderRadius:10, padding:'7px 6px', fontSize:10, color:'#9A3412', fontWeight:800, textAlign:'center' }}>✓ {label}</div>)}
+            </div>
+            {accountCreateResult && <div style={{ marginTop:10, borderRadius:12, padding:'9px 10px', fontSize:12, fontWeight:800, background:accountCreateResult.startsWith('오류')?'#FFF0F0':'#ECFDF5', color:accountCreateResult.startsWith('오류')?'#EF4444':'#059669' }}>{accountCreateResult}</div>}
+          </div>
+
           <ProfileAuditPanel data={data} manualMembers={manualMembers} />
 
           {/* 필터 */}
@@ -817,7 +901,7 @@ export default function ManagePage() {
                           return true;
                         });
                         const hasOnSale = (data?.onSaleByKeepAcct?.[acct.email]?.length ?? 0) > 0;
-                        if (filter !== 'all' && acct.usingCount===0 && acct.activeCount===0 && !hasOnSale) return null;
+                        if (filter !== 'all' && acct.usingCount===0 && acct.activeCount===0 && !hasOnSale && !acct.generatedAccount) return null;
                         const filledSlots = acct.usingCount || acct.activeCount;
                         const totalSlots = getPartyMax(acct.serviceType);
                         const fillPct = Math.round((filledSlots/totalSlots)*100);
@@ -867,6 +951,9 @@ export default function ManagePage() {
                                   <span style={{ fontSize:12, fontWeight:700, color:'#1E1B4B', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{acct.email}</span>
                                 </div>
                                 <div style={{ display:'flex', gap:6, alignItems:'center', marginTop:3, flexWrap:'wrap' }}>
+                                  {acct.generatedAccount && <span style={{ fontSize:10, color:acct.generatedAccount.paymentStatus==='paid'?'#059669':'#C2410C', fontWeight:900, display:'flex', alignItems:'center', gap:3, background:acct.generatedAccount.paymentStatus==='paid'?'#ECFDF5':'#FFEDD5', borderRadius:6, padding:'1px 7px' }}>
+                                    <KeyRound size={10} /> {acct.generatedAccount.paymentStatus==='paid'?'결제 완료':'생성만 완료'}
+                                  </span>}
                                   {vi.vacancy === 0 && <span style={{ fontSize:10, color:'#059669', fontWeight:600, display:'flex', alignItems:'center', gap:3 }}><TrendingUp size={10} /> 만석</span>}
                                   {vi.vacancy > 0 && vi.unfilled > 0 && (
                                     <span style={{ fontSize:10, color:'#EF4444', fontWeight:700, display:'flex', alignItems:'center', gap:3, background:'#FFF0F0', borderRadius:6, padding:'1px 7px' }}>
@@ -936,6 +1023,25 @@ export default function ManagePage() {
 
                             {isAcctOpen && (
                               <div style={{ borderTop:'1px solid #EDE9FE', padding:'8px 14px' }}>
+                                {acct.generatedAccount && (
+                                  <div style={{ background:acct.generatedAccount.paymentStatus==='paid'?'#ECFDF5':'#FFF7ED', border:`1.5px solid ${acct.generatedAccount.paymentStatus==='paid'?'#A7F3D0':'#FED7AA'}`, borderRadius:14, padding:12, marginBottom:10 }}>
+                                    <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, marginBottom:8 }}>
+                                      <div>
+                                        <div style={{ fontSize:13, fontWeight:900, color:'#1E1B4B' }}>✨ 방금 생성한 계정</div>
+                                        <div style={{ fontSize:10, color:'#9CA3AF', marginTop:2 }}>판매 게시물 없이도 계정 관리에 유지돼요 · Email ID #{acct.generatedAccount.emailId}</div>
+                                      </div>
+                                      <label onClick={e => e.stopPropagation()} style={{ flexShrink:0, display:'flex', alignItems:'center', gap:5, background:'#fff', borderRadius:999, padding:'6px 9px', fontSize:11, fontWeight:900, color:acct.generatedAccount.paymentStatus==='paid'?'#059669':'#C2410C', cursor:'pointer' }}>
+                                        <input type="checkbox" checked={acct.generatedAccount.paymentStatus==='paid'} onChange={e => toggleGeneratedAccountPaid(acct, e.target.checked)} />
+                                        결제 완료
+                                      </label>
+                                    </div>
+                                    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:7 }}>
+                                      <div style={{ background:'#fff', borderRadius:10, padding:'8px 9px' }}><div style={{ fontSize:9, color:'#9CA3AF', fontWeight:800 }}>비밀번호</div><div style={{ fontSize:12, color:'#1E1B4B', fontWeight:900, marginTop:2 }}>{acct.keepPasswd || '-'}</div></div>
+                                      <div style={{ background:'#fff', borderRadius:10, padding:'8px 9px' }}><div style={{ fontSize:9, color:'#9CA3AF', fontWeight:800 }}>PIN</div><div style={{ fontSize:12, color:'#1E1B4B', fontWeight:900, marginTop:2 }}>{acct.generatedAccount.pin}</div></div>
+                                    </div>
+                                    <div style={{ fontSize:10, color:'#C2410C', marginTop:8, lineHeight:1.35 }}>다음 단계: 이 계정으로 서비스 가입 → 결제 완료하면 위 체크표시를 눌러주세요.</div>
+                                  </div>
+                                )}
                                 {filteredMembers.length === 0 ? (
                                   <div style={{ fontSize:12, color:'#9CA3AF', textAlign:'center', padding:'8px 0' }}>해당 조건의 파티원 없음</div>
                                 ) : filteredMembers.map((m, idx) => {

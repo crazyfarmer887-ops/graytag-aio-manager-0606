@@ -93,5 +93,12 @@ test('OTT home and navigation use the refreshed UI structure', () => {
   assert.match(manage, /findExactPasswordForAccount/);
   assert.match(manage, /requireExactAliasMemoForAutoFill/);
   assert.match(manage, /전체 메꾸기 미리보기 필요/);
+  assert.match(manage, /계정 생성/);
+  assert.match(manage, /Email 대시보드 alias/);
+  assert.match(manage, /generated-accounts\/create/);
+  assert.match(manage, /생성만 완료/);
+  assert.match(manage, /결제 완료/);
+  assert.match(manage, /판매 게시물 없이도 계정 관리에 유지/);
+  assert.match(read('src/api/index.ts'), /mergeGeneratedAccountsIntoManagement/);
   assert.doesNotMatch(manage, /ANY product with a password from ANY account/);
 });
