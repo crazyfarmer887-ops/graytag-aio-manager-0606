@@ -33,7 +33,7 @@ describe('profile nickname assignment', () => {
   });
 
   test('puts the updated one-profile warning three times at the very top of account delivery memo', () => {
-    const memo = buildProfileWarningMemo('수달이', '기존 안내문입니다.');
+    const memo = buildProfileWarningMemo('수달이', '프로필을 만드실 때, 본명에서 가운데 글자를 별(*)로 가려주세요!\n기존 안내문입니다.');
     expect(memo.startsWith('⚠️ 1인 1프로필 원칙 안내 ⚠️')).toBe(true);
     expect(memo.match(/⚠️ 1인 1프로필 원칙 안내 ⚠️/g)).toHaveLength(3);
     expect(memo.match(/배정된 프로필 이름 : 수달이/g)).toHaveLength(3);
@@ -41,6 +41,7 @@ describe('profile nickname assignment', () => {
     expect(memo.match(/다른 프로필을 사용하거나 새 프로필을 추가하면 다른 이용자와 충돌이 생겨 이용이 제한될 수 있습니다\./g)).toHaveLength(3);
     expect(memo).not.toContain('배정 프로필:');
     expect(memo).not.toContain('프로필명이 없거나 접속이 안 되면');
+    expect(memo).not.toContain('본명에서 가운데 글자');
     expect(memo).toContain('기존 안내문입니다.');
   });
 

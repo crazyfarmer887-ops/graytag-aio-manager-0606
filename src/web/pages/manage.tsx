@@ -2,7 +2,8 @@ import { useState, useEffect } from "react";
 import { CATEGORIES } from "../lib/constants";
 import { buildAccountSlotStates, dedupeRecruitingProducts, mergeRecruitingProducts, type SlotState } from "../lib/account-slots";
 import { removeRecruitingProductFromManageData } from "../lib/manage-optimistic";
-import { assertAutoDeliveryInput, buildFillProductModel, findExactPasswordForAccount, requireExactAliasMemoForAutoFill } from "../../lib/graytag-fill";
+import { assertAutoDeliveryInput, buildAutoFillDeliveryMemo, buildFillProductModel, findExactPasswordForAccount, requireExactAliasMemoForAutoFill } from "../../lib/graytag-fill";
+import { generateProfileNickname, isValidProfileNickname, normalizeProfileNickname } from "../../lib/profile-nickname";
 import { buildProfileAuditRows, summarizeProfileAudit, type ProfileAuditRow, type ProfileAuditStore } from "../../lib/profile-audit";
 import { RefreshCw, KeyRound, Mail, ChevronDown, ChevronRight, TrendingUp, Loader2, AlertCircle, ExternalLink, Calendar, UserX, Megaphone, PlusCircle, X, UserPlus, Trash2, Activity, Wifi, WifiOff } from "lucide-react";
 
@@ -292,6 +293,7 @@ export default function ManagePage() {
   const [fillPriceMode, setFillPriceMode] = useState<'total'|'daily'>('total');
   const [fillCount, setFillCount] = useState(1);
   const [fillKeepMemo, setFillKeepMemo] = useState('');
+  const [fillProfileNickname, setFillProfileNickname] = useState('');
   const [fillAliasStatus, setFillAliasStatus] = useState<{ ok: boolean; message: string; email?: string; serviceType?: string; memo?: string } | null>(null);
   const [fillAliasLoading, setFillAliasLoading] = useState(false);
   const [fillLoading, setFillLoading] = useState(false);
@@ -462,16 +464,17 @@ export default function ManagePage() {
   const getManualForAccount = (email: string, serviceType: string) =>
     manualMembers.filter(m => m.accountEmail === email && m.serviceType === serviceType);
 
-  const loadFillMemoFromEmailDashboard = async (email: string, serviceType: string, fallbackMemo = '') => {
+  const loadFillMemoFromEmailDashboard = async (email: string, serviceType: string, fallbackMemo = '', profileNickname = fillProfileNickname) => {
     setFillAliasLoading(true);
     setFillAliasStatus(null);
     try {
       const res = await fetch(`/api/email-alias-fill?email=${encodeURIComponent(email)}&serviceType=${encodeURIComponent(serviceType)}`);
       const data = await res.json() as any;
       if (res.ok && data?.ok && data.memo) {
-        setFillKeepMemo(data.memo);
-        setFillAliasStatus({ ok: true, message: `이메일 대시보드 DB에서 자동 입력됨: #${data.emailId}`, email, serviceType, memo: data.memo });
-        return data.memo as string;
+        const deliveryMemo = buildAutoFillDeliveryMemo(profileNickname, data.memo);
+        setFillKeepMemo(deliveryMemo);
+        setFillAliasStatus({ ok: true, message: `이메일 대시보드 DB에서 자동 입력됨: #${data.emailId}`, email, serviceType, memo: deliveryMemo });
+        return deliveryMemo;
       }
 
       const missing = Array.isArray(data?.missing) ? data.missing : [];
@@ -585,6 +588,7 @@ export default function ManagePage() {
 
   const handleFill = async () => {
     if (!fillModal || !fillEndDate || fillFinalPrice < 1000) return;
+    if (!isValidProfileNickname(fillProfileNickname)) { setFillResult('자동 등록 차단: 프로필명은 한글 3~4글자로 입력해주세요.'); return; }
     const cs = cookies.find(c => c.id === selectedId);
     if (!cs) return;
     setFillLoading(true); setFillResult(null);
@@ -1188,6 +1192,10 @@ export default function ManagePage() {
                                     // keepMemo: Email Dashboard exact alias/PIN 조회 성공 시에만 자동 등록 허용
                                     const existingMemo = refOnSale?.keepMemo || '';
 
+                                    const fillNickname = generateProfileNickname();
+                                    const fallbackDeliveryMemo = existingMemo ? buildAutoFillDeliveryMemo(fillNickname, existingMemo) : '';
+                                    setFillProfileNickname(fillNickname);
+
                                     // endDateTime: OnSale 게시글 > 이용중 파티원의 endDateTime
                                     const refEndDateTime = refOnSale?.endDateTime || refMember?.endDateTime || '';
 
@@ -1218,7 +1226,7 @@ export default function ManagePage() {
                                       serviceType: acct.serviceType,
                                       keepAcct: acct.email,
                                       keepPasswd: autoPasswd,
-                                      keepMemo: existingMemo,
+                                      keepMemo: fallbackDeliveryMemo,
                                       vacancy: vi.unfilled,
                                       productName: refOnSale?.productName || `✅ 이메일 코드 언제든지 셀프인증 가능! ✅ ${acct.serviceType} 프리미엄!`,
                                       category: svcToCategory(acct.serviceType),
@@ -1228,11 +1236,11 @@ export default function ManagePage() {
                                     setFillDailyPrice(refDailyPrice);
                                     setFillPriceMode(refPriceMode);
                                     setFillEndDate(refEndDateTime ? parseGraytagDate(refEndDateTime) : '');
-                                    setFillKeepMemo(existingMemo || '');
+                                    setFillKeepMemo(fallbackDeliveryMemo || '');
                                     setFillAliasStatus(null);
                                     setFillResult(null);
                                     setFillRank(null);
-                                    await loadFillMemoFromEmailDashboard(acct.email, acct.serviceType, existingMemo);
+                                    await loadFillMemoFromEmailDashboard(acct.email, acct.serviceType, fallbackDeliveryMemo, fillNickname);
                                   }} style={{
                                     width: '100%', marginTop: 8, padding: '10px 14px', borderRadius: 10,
                                     background: '#FFF0F0', border: '1.5px solid #FCA5A5',
@@ -1360,6 +1368,31 @@ export default function ManagePage() {
               <div style={{ fontSize:11, color:'#EF4444', marginBottom:8 }}>최소 1,000원 이상이어야 합니다</div>
             )}
 
+            <label style={{ display:'block', fontSize:12, fontWeight:700, color:'#6B7280', marginBottom:6 }}>배정된 프로필 이름 *</label>
+            <div style={{ display:'flex', gap:8, marginBottom:8 }}>
+              <input type="text" value={fillProfileNickname} placeholder="예: 수달이"
+                onChange={e => {
+                  const nickname = normalizeProfileNickname(e.target.value);
+                  setFillProfileNickname(nickname);
+                  const nextMemo = buildAutoFillDeliveryMemo(nickname, fillKeepMemo);
+                  setFillKeepMemo(nextMemo);
+                  if (fillAliasStatus?.ok) setFillAliasStatus({ ...fillAliasStatus, memo: nextMemo });
+                }}
+                style={{ flex:1, padding:'11px 14px', borderRadius:10, border:`1.5px solid ${fillProfileNickname && !isValidProfileNickname(fillProfileNickname) ? '#FCA5A5' : '#EDE9FE'}`, fontSize:13, color:'#1E1B4B', background:'#F8F6FF', outline:'none', fontFamily:'inherit', boxSizing:'border-box' }} />
+              <button onClick={() => {
+                const nickname = generateProfileNickname();
+                setFillProfileNickname(nickname);
+                const nextMemo = buildAutoFillDeliveryMemo(nickname, fillKeepMemo);
+                setFillKeepMemo(nextMemo);
+                if (fillAliasStatus?.ok) setFillAliasStatus({ ...fillAliasStatus, memo: nextMemo });
+              }} style={{ border:'none', borderRadius:10, padding:'0 12px', background:'#EDE9FE', color:'#7C3AED', fontSize:12, fontWeight:800, cursor:'pointer', fontFamily:'inherit' }}>
+                랜덤
+              </button>
+            </div>
+            <div style={{ background:'#FFFBEB', border:'1px solid #FDE68A', borderRadius:10, padding:'8px 10px', marginBottom:10, fontSize:11, color:'#92400E', fontWeight:700 }}>
+              ⚠️ 1인 1프로필 안내 3회 반복 문구가 전달 메모 맨 위에 자동으로 들어갑니다.
+            </div>
+
             <label style={{ display:'block', fontSize:12, fontWeight:700, color:'#6B7280', marginBottom:6 }}>추가 안내 (계정 전달 메모)</label>
             {fillAliasLoading && (
               <div style={{ background:'#F3F0FF', borderRadius:10, padding:'8px 10px', marginBottom:8, fontSize:11, color:'#7C3AED', fontWeight:700 }}>
@@ -1373,7 +1406,7 @@ export default function ManagePage() {
             )}
             <textarea value={fillKeepMemo} readOnly={fillAliasStatus?.ok === true} onChange={e => setFillKeepMemo(e.target.value)}
               placeholder={fillAliasStatus?.ok ? '이메일 대시보드 DB에서 자동 입력됐어요' : '이메일/PIN 정보가 있으면 자동으로 채워져요'}
-              style={{ width:'100%', padding:'11px 14px', borderRadius:10, border:'1.5px solid #EDE9FE', fontSize:12, color:'#1E1B4B', background:'#F8F6FF', outline:'none', fontFamily:'inherit', marginBottom:10, boxSizing:'border-box', height:80, resize:'vertical' }} />
+              style={{ width:'100%', padding:'11px 14px', borderRadius:10, border:'1.5px solid #EDE9FE', fontSize:12, color:'#1E1B4B', background:'#F8F6FF', outline:'none', fontFamily:'inherit', marginBottom:10, boxSizing:'border-box', height:180, resize:'vertical' }} />
 
             <label style={{ display:'block', fontSize:12, fontWeight:700, color:'#6B7280', marginBottom:6 }}>등록 개수</label>
             <div style={{ display:'flex', gap:6, marginBottom:14 }}>
@@ -1391,10 +1424,10 @@ export default function ManagePage() {
               <div style={{ background: /오류|실패|차단/.test(fillResult) ? '#FFF0F0' : '#F0FDF4', borderRadius:10, padding:'8px 14px', marginBottom:10, fontSize:12, color: /오류|실패|차단/.test(fillResult) ? '#EF4444' : '#059669', fontWeight:600 }}>{fillResult}</div>
             )}
 
-            <button onClick={handleFill} disabled={fillLoading || fillAliasLoading || fillAliasStatus?.ok !== true || fillAliasStatus?.email !== fillModal.keepAcct || fillAliasStatus?.serviceType !== fillModal.serviceType || !fillEndDate || fillFinalPrice < 1000} style={{
+            <button onClick={handleFill} disabled={fillLoading || fillAliasLoading || !isValidProfileNickname(fillProfileNickname) || fillAliasStatus?.ok !== true || fillAliasStatus?.email !== fillModal.keepAcct || fillAliasStatus?.serviceType !== fillModal.serviceType || !fillEndDate || fillFinalPrice < 1000} style={{
               width:'100%', padding:14, borderRadius:12, border:'none',
-              background: (fillLoading || fillAliasLoading || fillAliasStatus?.ok !== true || fillAliasStatus?.email !== fillModal.keepAcct || fillAliasStatus?.serviceType !== fillModal.serviceType) ? '#C4B5FD' : '#A78BFA', color:'#fff', fontSize:15, fontWeight:700,
-              cursor: (fillLoading || fillAliasLoading || fillAliasStatus?.ok !== true || fillAliasStatus?.email !== fillModal.keepAcct || fillAliasStatus?.serviceType !== fillModal.serviceType) ? 'not-allowed' : 'pointer', fontFamily:'inherit',
+              background: (fillLoading || fillAliasLoading || !isValidProfileNickname(fillProfileNickname) || fillAliasStatus?.ok !== true || fillAliasStatus?.email !== fillModal.keepAcct || fillAliasStatus?.serviceType !== fillModal.serviceType) ? '#C4B5FD' : '#A78BFA', color:'#fff', fontSize:15, fontWeight:700,
+              cursor: (fillLoading || fillAliasLoading || !isValidProfileNickname(fillProfileNickname) || fillAliasStatus?.ok !== true || fillAliasStatus?.email !== fillModal.keepAcct || fillAliasStatus?.serviceType !== fillModal.serviceType) ? 'not-allowed' : 'pointer', fontFamily:'inherit',
               boxShadow:'0 4px 16px rgba(167,139,250,0.35)',
               display:'flex', alignItems:'center', justifyContent:'center', gap:8,
             }}>

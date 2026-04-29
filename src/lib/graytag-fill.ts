@@ -1,3 +1,5 @@
+import { buildProfileWarningMemo } from './profile-nickname';
+
 export const DEFAULT_SELLING_GUIDE_SUFFIX = '구매 시 제공되는 "직접 운영하는" 이메일 코드 확인 사이트를 통해 언제든지 이메일을 확인하실 수 있으십니다!\n\n❤️ 1 1 1 원칙을 꼭 지켜주세요 ❤️\n1인 1기기 1계정 원칙이며 어길 시 약정에 의거 위약금 부과됩니다!';
 
 export function makeDefaultSellingGuide(serviceLabel: string): string {
@@ -27,6 +29,10 @@ export function buildFillProductModel(input: FillProductModelInput): Record<stri
     productModel.productCountryString = 'Domestic';
   }
   return productModel;
+}
+
+export function buildAutoFillDeliveryMemo(profileNickname: string, emailDashboardMemo: string): string {
+  return buildProfileWarningMemo(profileNickname, emailDashboardMemo || '');
 }
 
 export function assertAutoDeliveryInput(input: { keepAcct?: string; keepPasswd?: string; keepMemo?: string }): string | null {

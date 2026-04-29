@@ -79,7 +79,12 @@ export function isValidProfileNickname(value: string): boolean {
 export function buildProfileWarningMemo(profileNickname: string, baseMemo: string): string {
   const nickname = isValidProfileNickname(profileNickname) ? normalizeProfileNickname(profileNickname) : generateProfileNickname(() => 0);
   const warning = `⚠️ 1인 1프로필 원칙 안내 ⚠️\n\n배정된 프로필 이름 : ${nickname}\n\n프로필을 만드실 때 해당 이름으로 꼭 만드신 뒤 사용하셔야 합니다. 그리고 반드시 위 프로필만 사용해주세요.\n\n다른 프로필을 사용하거나 새 프로필을 추가하면 다른 이용자와 충돌이 생겨 이용이 제한될 수 있습니다.\n\n⚠️ 1인 1프로필 원칙 안내 ⚠️\n\n배정된 프로필 이름 : ${nickname}\n\n프로필을 만드실 때 해당 이름으로 꼭 만드신 뒤 사용하셔야 합니다. 그리고 반드시 위 프로필만 사용해주세요.\n\n다른 프로필을 사용하거나 새 프로필을 추가하면 다른 이용자와 충돌이 생겨 이용이 제한될 수 있습니다.\n\n⚠️ 1인 1프로필 원칙 안내 ⚠️\n\n배정된 프로필 이름 : ${nickname}\n\n프로필을 만드실 때 해당 이름으로 꼭 만드신 뒤 사용하셔야 합니다. 그리고 반드시 위 프로필만 사용해주세요.\n\n다른 프로필을 사용하거나 새 프로필을 추가하면 다른 이용자와 충돌이 생겨 이용이 제한될 수 있습니다.`;
-  const stripped = baseMemo.replace(/^⚠️ 1인 1프로필 원칙 안내[\s\S]*?(?=아래 내용 꼭 읽어주세요!|로그인 시도 간|https:\/\/email-verify\.xyz|$)/, '').trimStart();
+  let stripped = baseMemo.replace(/^⚠️ 1인 1프로필 원칙 안내[\s\S]*?(?=아래 내용 꼭 읽어주세요!|로그인 시도 간|https:\/\/email-verify\.xyz|✅ 아래 내용 꼭 읽어주세요|$)/, '').trimStart();
+  stripped = stripped
+    .replace(/^프로필을 만드실 때,? 본명에서 가운데 글자를 별\(\*\)로 가려주세요!?.*\n?/gm, '')
+    .replace(/^만약, 특수기호 사용이 불가할 경우 본명으로 설정 부탁드립니다!?.*\n?/gm, '')
+    .replace(/^만약, 접속 시 기본 프로필.*\n?/gm, '')
+    .trimStart();
   return `${warning}\n\n${stripped}`.trim();
 }
 
