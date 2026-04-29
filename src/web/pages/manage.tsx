@@ -384,6 +384,20 @@ export default function ManagePage() {
     }
   };
 
+  const handleDeleteGeneratedAccount = async (acct: Account) => {
+    if (!acct.generatedAccount) return;
+    if (!window.confirm('방금 생성한 계정을 삭제할까요? SimpleLogin alias도 함께 삭제돼요.')) return;
+    try {
+      const res = await fetch(`/api/generated-accounts/${encodeURIComponent(acct.generatedAccount.id)}`, { method:'DELETE' });
+      const json = await res.json().catch(() => ({})) as any;
+      if (!res.ok) throw new Error(json.error || '생성 계정 삭제 실패');
+      setAccountCreateResult(`${acct.email} 삭제 완료`);
+      await doFetch();
+    } catch (e: any) {
+      setAccountCreateResult(`오류: ${e.message}`);
+    }
+  };
+
   useEffect(() => {
     fetchManualMembers();
     fetchSessionStatus();
@@ -1030,10 +1044,15 @@ export default function ManagePage() {
                                         <div style={{ fontSize:13, fontWeight:900, color:'#1E1B4B' }}>✨ 방금 생성한 계정</div>
                                         <div style={{ fontSize:10, color:'#9CA3AF', marginTop:2 }}>판매 게시물 없이도 계정 관리에 유지돼요 · Email ID #{acct.generatedAccount.emailId}</div>
                                       </div>
-                                      <label onClick={e => e.stopPropagation()} style={{ flexShrink:0, display:'flex', alignItems:'center', gap:5, background:'#fff', borderRadius:999, padding:'6px 9px', fontSize:11, fontWeight:900, color:acct.generatedAccount.paymentStatus==='paid'?'#059669':'#C2410C', cursor:'pointer' }}>
-                                        <input type="checkbox" checked={acct.generatedAccount.paymentStatus==='paid'} onChange={e => toggleGeneratedAccountPaid(acct, e.target.checked)} />
-                                        결제 완료
-                                      </label>
+                                      <div style={{ display:'flex', alignItems:'center', gap:6, flexShrink:0 }}>
+                                        <label onClick={e => e.stopPropagation()} style={{ display:'flex', alignItems:'center', gap:5, background:'#fff', borderRadius:999, padding:'6px 9px', fontSize:11, fontWeight:900, color:acct.generatedAccount.paymentStatus==='paid'?'#059669':'#C2410C', cursor:'pointer' }}>
+                                          <input type="checkbox" checked={acct.generatedAccount.paymentStatus==='paid'} onChange={e => toggleGeneratedAccountPaid(acct, e.target.checked)} />
+                                          결제 완료
+                                        </label>
+                                        <button onClick={e => { e.stopPropagation(); handleDeleteGeneratedAccount(acct); }} title="방금 생성한 계정 삭제" style={{ border:'none', background:'#FFF0F0', color:'#EF4444', borderRadius:999, padding:'6px 9px', fontSize:11, fontWeight:900, cursor:'pointer', display:'flex', alignItems:'center', gap:4 }}>
+                                          <Trash2 size={12} /> 삭제
+                                        </button>
+                                      </div>
                                     </div>
                                     <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:7 }}>
                                       <div style={{ background:'#fff', borderRadius:10, padding:'8px 9px' }}><div style={{ fontSize:9, color:'#9CA3AF', fontWeight:800 }}>비밀번호</div><div style={{ fontSize:12, color:'#1E1B4B', fontWeight:900, marginTop:2 }}>{acct.keepPasswd || '-'}</div></div>

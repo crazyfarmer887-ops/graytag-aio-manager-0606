@@ -18,7 +18,7 @@ import { checkNetflixProfiles, fetchNetflixEmailCodeViaEmailServer } from './net
 import { extractGraytagChats, findLatestBuyerInquiryMessage } from './chat-message-summary';
 import { mergePartyMaintenanceChecklistState, type PartyMaintenanceChecklistStore } from '../lib/party-maintenance-checklist';
 import { buildProfileAssignment, type ProfileAssignment } from '../lib/profile-nickname';
-import { buildGeneratedAccount, extractSimpleLoginAliasRef, generateAccountPassword, mergeGeneratedAccountsIntoManagement, normalizeGeneratedAccountPatch, type GeneratedAccountStore, type SimpleLoginAliasRef } from '../lib/generated-accounts';
+import { buildGeneratedAccount, deleteGeneratedAccountFromStore, extractSimpleLoginAliasRef, generateAccountPassword, mergeGeneratedAccountsIntoManagement, nextGeneratedAliasPrefix, normalizeGeneratedAccountPatch, type GeneratedAccountStore, type SimpleLoginAliasRef } from '../lib/generated-accounts';
 import { resolveAutoReplyPolicy } from './auto-reply-policy';
 import { normalizeBuyerMessage, messageFingerprint, messageTimestamp, isBuyerTextMessage } from './auto-reply-message';
 import { createAutoReplyJob, listAutoReplyJobs, loadAutoReplyJobStore, saveAutoReplyJobStore, updateAutoReplyJob, type AutoReplyJobStore } from './auto-reply-jobs';
@@ -244,43 +244,74 @@ function simpleLoginApiKey(): string {
     || readEnvValueFromFile(EMAIL_DASHBOARD_ENV_PATH, 'SIMPLELOGIN_API_KEY').trim();
 }
 
-async function resolveSimpleLoginAliasIdByEmail(email: string, key: string): Promise<SimpleLoginAliasRef | null> {
-  const target = email.trim().toLowerCase();
-  if (!target) return null;
-  for (let page = 0; page < 5; page += 1) {
+async function listSimpleLoginAliases(key: string, maxPages = 10): Promise<SimpleLoginAliasRef[]> {
+  const aliases: SimpleLoginAliasRef[] = [];
+  for (let page = 0; page < maxPages; page += 1) {
     const res = await fetch(`${SIMPLELOGIN_API}/aliases?page_id=${page}`, { headers: { Authentication: key, 'Content-Type': 'application/json' } });
     if (!res.ok) break;
     const data = await res.json().catch(() => ({} as any)) as any;
-    const aliases = Array.isArray(data?.aliases) ? data.aliases : [];
-    for (const item of aliases) {
+    const items = Array.isArray(data?.aliases) ? data.aliases : [];
+    for (const item of items) {
       const alias = extractSimpleLoginAliasRef(item);
-      if (alias?.id !== undefined && alias.email === target) return alias;
+      if (alias) aliases.push(alias);
     }
-    if (aliases.length === 0) break;
+    if (items.length === 0) break;
   }
-  return null;
+  return aliases;
 }
 
-async function createSimpleLoginRandomAlias(input: { serviceType: string; note: string }) {
+async function resolveSimpleLoginAliasIdByEmail(email: string, key: string): Promise<SimpleLoginAliasRef | null> {
+  const target = email.trim().toLowerCase();
+  if (!target) return null;
+  return (await listSimpleLoginAliases(key)).find(alias => alias.id !== undefined && alias.email === target) || null;
+}
+
+async function createSimpleLoginCustomAlias(input: { serviceType: string; note: string; existingEmails: string[] }) {
   const key = simpleLoginApiKey();
   if (!key) throw new Error('SIMPLELOGIN_API_KEY가 AIO 또는 이메일 대시보드 환경에 없어요.');
-  const url = new URL('/api/alias/random/new', SIMPLELOGIN_API);
-  url.searchParams.set('hostname', 'graytag-account-generator');
-  url.searchParams.set('mode', 'word');
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { Authentication: key, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ note: input.note }),
-  });
-  const data = await res.json().catch(() => ({} as any)) as any;
-  if (!res.ok) throw new Error(data?.error || data?.message || `SimpleLogin alias 생성 실패 (${res.status})`);
-  const alias = extractSimpleLoginAliasRef(data);
-  if (!alias?.email) throw new Error('SimpleLogin 응답에 alias email이 없어요.');
-  if (alias.id !== undefined && alias.id !== null && alias.id !== '') return { id: alias.id, email: alias.email };
 
-  const resolved = await resolveSimpleLoginAliasIdByEmail(alias.email, key);
-  if (!resolved?.id) throw new Error('SimpleLogin 별칭은 생성됐지만 alias id를 목록에서 찾지 못했어요. 잠시 후 새로고침해 주세요.');
-  return { id: resolved.id, email: resolved.email };
+  const existingAliases = await listSimpleLoginAliases(key);
+  const baseExistingEmails = [...input.existingEmails, ...existingAliases.map(alias => alias.email)];
+  const optionsRes = await fetch(`${SIMPLELOGIN_API}/v5/alias/options`, { headers: { Authentication: key, 'Content-Type': 'application/json' } });
+  const options = await optionsRes.json().catch(() => ({} as any)) as any;
+  if (!optionsRes.ok) throw new Error(options?.error || options?.message || `SimpleLogin alias 옵션 조회 실패 (${optionsRes.status})`);
+  const suffix = (Array.isArray(options?.suffixes) ? options.suffixes : []).find((item: any) => item?.signed_suffix || item?.['signed-suffix']);
+  const signedSuffix = suffix?.signed_suffix || suffix?.['signed-suffix'];
+  if (!signedSuffix) throw new Error('SimpleLogin alias suffix 옵션을 찾지 못했어요.');
+
+  // POST https://app.simplelogin.io/api/v2/alias/custom/new
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const aliasPrefix = nextGeneratedAliasPrefix(input.serviceType, baseExistingEmails);
+    const res = await fetch(`${SIMPLELOGIN_API}/v2/alias/custom/new?hostname=${encodeURIComponent(aliasPrefix)}`, {
+      method: 'POST',
+      headers: { Authentication: key, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ alias_prefix: aliasPrefix, signed_suffix: signedSuffix, note: input.note }),
+    });
+    const data = await res.json().catch(() => ({} as any)) as any;
+    if (res.status === 409) {
+      baseExistingEmails.push(`${aliasPrefix}@already-used.local`);
+      continue;
+    }
+    if (!res.ok) throw new Error(data?.error || data?.message || `SimpleLogin alias 생성 실패 (${res.status})`);
+    const alias = extractSimpleLoginAliasRef(data);
+    if (!alias?.email) throw new Error('SimpleLogin 응답에 alias email이 없어요.');
+    if (alias.id !== undefined && alias.id !== null && alias.id !== '') return { id: alias.id, email: alias.email };
+
+    const resolved = await resolveSimpleLoginAliasIdByEmail(alias.email, key);
+    if (!resolved?.id) throw new Error('SimpleLogin 별칭은 생성됐지만 alias id를 목록에서 찾지 못했어요. 잠시 후 새로고침해 주세요.');
+    return { id: resolved.id, email: resolved.email };
+  }
+
+  throw new Error('사용 가능한 서비스명+숫자 alias prefix를 찾지 못했어요.');
+}
+
+async function deleteSimpleLoginAlias(aliasId: string | number, key: string): Promise<void> {
+  // DELETE https://app.simplelogin.io/api/aliases/:alias_id
+  const res = await fetch(`${SIMPLELOGIN_API}/aliases/${encodeURIComponent(String(aliasId))}`, { method: 'DELETE', headers: { Authentication: key, 'Content-Type': 'application/json' } });
+  if (!res.ok && res.status !== 404) {
+    const data = await res.json().catch(() => ({} as any)) as any;
+    throw new Error(data?.error || data?.message || `SimpleLogin alias 삭제 실패 (${res.status})`);
+  }
 }
 
 // ─── 세션 쿠키 조회 엔드포인트 (프론트에서 자동 쿠키 상태 확인용) ───
@@ -610,9 +641,10 @@ app.post('/generated-accounts/create', async (c) => {
     const now = new Date().toISOString();
     const pin = generateSixDigitPin();
     const password = generateAccountPassword();
-    const alias = await createSimpleLoginRandomAlias({
+    const alias = await createSimpleLoginCustomAlias({
       serviceType,
       note: `[Graytag 계정 생성기] ${serviceType} · ${now}`,
+      existingEmails: Object.values(readGeneratedAccountStore()).map(account => account.email),
     });
     const memo = makeEmailVerifyMemo(alias.id, pin);
     const pinResult = await updateEmailAliasPin({ accountEmail: alias.email, serviceType, aliases: [{ id: alias.id, email: alias.email, enabled: true }], pin }, now);
@@ -638,6 +670,22 @@ app.patch('/generated-accounts/:id', async (c) => {
   store[id] = { ...account, ...patch };
   writeGeneratedAccountStore(store);
   return c.json({ ok: true, account: store[id] });
+});
+
+app.delete('/generated-accounts/:id', async (c) => {
+  const { id } = c.req.param();
+  const store = readGeneratedAccountStore();
+  const result = deleteGeneratedAccountFromStore(store, id);
+  if (!result.deleted) return c.json({ error: '생성 계정을 찾지 못했어요' }, 404);
+  try {
+    const key = simpleLoginApiKey();
+    if (!key) throw new Error('SIMPLELOGIN_API_KEY가 AIO 또는 이메일 대시보드 환경에 없어요.');
+    await deleteSimpleLoginAlias(result.deleted.emailId, key);
+    writeGeneratedAccountStore(result.store);
+    return c.json({ ok: true, deleted: { id: result.deleted.id, email: result.deleted.email, emailId: result.deleted.emailId } });
+  } catch (e: any) {
+    return c.json({ error: e?.message || '생성 계정 삭제 실패' }, 500);
+  }
 });
 
 // 계정 관리 - 서비스별 > 상품별 > 파티원 + 수입 통계

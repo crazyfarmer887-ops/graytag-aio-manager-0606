@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { buildGeneratedAccount, extractSimpleLoginAliasRef, generateAccountPassword, generatedAccountKey, mergeGeneratedAccountsIntoManagement, normalizeGeneratedAccountPatch } from '../src/lib/generated-accounts';
+import { buildGeneratedAccount, deleteGeneratedAccountFromStore, extractSimpleLoginAliasRef, generateAccountPassword, generatedAccountKey, mergeGeneratedAccountsIntoManagement, nextGeneratedAliasPrefix, normalizeGeneratedAccountPatch, serviceAliasStem } from '../src/lib/generated-accounts';
 
 describe('generated accounts', () => {
   test('generates a 10 character password with lowercase start, digit, and symbol', () => {
@@ -54,5 +54,20 @@ describe('generated accounts', () => {
     expect(extractSimpleLoginAliasRef({ alias: { id: 123, email: 'Alias@Id.test' } })).toEqual({ id: 123, email: 'alias@id.test' });
     expect(extractSimpleLoginAliasRef({ data: { alias: { alias_id: 'abc', address: 'Nested@Example.com' } } })).toEqual({ id: 'abc', email: 'nested@example.com' });
     expect(extractSimpleLoginAliasRef({ alias: 'not-an-email' })).toBeNull();
+  });
+
+  test('uses short service-number prefixes for generated SimpleLogin aliases', () => {
+    expect(serviceAliasStem('웨이브')).toBe('wavve');
+    expect(serviceAliasStem('넷플릭스')).toBe('netflix');
+    expect(nextGeneratedAliasPrefix('웨이브', ['wavve1.foo@example.com', 'wavve3@example.com', 'netflix9@example.com'])).toBe('wavve4');
+    expect(nextGeneratedAliasPrefix('티빙', ['tving2.foo@example.com'])).toBe('tving3');
+  });
+
+  test('deletes generated accounts from the sensitive runtime store by id', () => {
+    const keep = buildGeneratedAccount({ serviceType: '넷플릭스', alias: { id: 101, email: 'keep@example.com' }, password: 'a12345678!', pin: '123456', memo: 'memo', now: '2026-04-29T12:00:00.000Z' });
+    const remove = buildGeneratedAccount({ serviceType: '웨이브', alias: { id: 102, email: 'remove@example.com' }, password: 'a12345678!', pin: '123456', memo: 'memo', now: '2026-04-29T12:01:00.000Z' });
+    const result = deleteGeneratedAccountFromStore({ [keep.id]: keep, [remove.id]: remove }, remove.id);
+    expect(result.deleted?.email).toBe('remove@example.com');
+    expect(Object.keys(result.store)).toEqual([keep.id]);
   });
 });

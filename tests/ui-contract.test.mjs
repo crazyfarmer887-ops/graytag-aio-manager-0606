@@ -99,6 +99,15 @@ test('OTT home and navigation use the refreshed UI structure', () => {
   assert.match(manage, /생성만 완료/);
   assert.match(manage, /결제 완료/);
   assert.match(manage, /판매 게시물 없이도 계정 관리에 유지/);
+  assert.match(manage, /방금 생성한 계정 삭제/);
+  assert.match(manage, /method:'DELETE'/);
+  assert.match(manage, /handleDeleteGeneratedAccount/);
+  assert.match(read('src/api/index.ts'), /app\.delete\('\/generated-accounts\/:id'/);
+  assert.match(read('src/api/index.ts'), /createSimpleLoginCustomAlias/);
+  assert.doesNotMatch(read('src/api/index.ts'), /graytag-account-generator/);
+  assert.match(read('src/api/index.ts'), /nextGeneratedAliasPrefix/);
+  assert.match(read('src/api/index.ts'), /api\/v2\/alias\/custom\/new/);
+  assert.match(read('src/api/index.ts'), /DELETE.*api\/aliases/);
   assert.match(read('src/api/index.ts'), /mergeGeneratedAccountsIntoManagement/);
   assert.doesNotMatch(manage, /ANY product with a password from ANY account/);
 });
