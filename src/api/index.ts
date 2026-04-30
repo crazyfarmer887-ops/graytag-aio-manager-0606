@@ -10,6 +10,7 @@ import { assertPriceChangeAllowed, loadPriceSafetyConfig, previewPriceChange, re
 import { loadSafeModeConfig, saveSafeModeConfig } from './safe-mode';
 import { generateSixDigitPin, makeEmailVerifyMemo, resolveEmailAliasFill, updateEmailAliasPin, verifyEmailAliasPinUpdate } from './email-alias-fill';
 import { buildFinishedDealsUrl } from '../lib/graytag-fill';
+import { extractDeliveredAccountFromChats, shouldHydrateDeliveredAccountFromChat } from '../lib/deal-delivered-account';
 import { planUndercutterPriceChange } from '../lib/undercutter-price';
 import { DEFAULT_MANAGEMENT_CACHE_TTL_MS, isAutoSessionManagementRequest, managementCache, shouldForceManagementRefresh } from './management-cache';
 import { buildProfileAuditRows, profileAuditKey, runProfileCheckPlaceholder, summarizeProfileAudit, type ProfileAuditRow, type ProfileAuditStore } from '../lib/profile-audit';
@@ -747,28 +748,26 @@ app.post('/my/management', async (c) => {
       }
     }
 
-    // DeliveredAndCheckPrepaid 거래: keepAcct가 없으면 채팅방에서 전달된 계정 파싱
+    // 계정확인중 거래: keepAcct가 없으면 채팅방에서 판매자가 전달한 계정 ID를 파싱해서 계정 관리에 반영
     {
-      const deliveredDeals = allDeals.filter((d: any) => d.dealStatus === 'DeliveredAndCheckPrepaid' && d.chatRoomUuid && !d.keepAcct?.trim());
+      const deliveredDeals = allDeals.filter((d: any) => shouldHydrateDeliveredAccountFromChat(d));
       if (deliveredDeals.length > 0) {
         await Promise.all(deliveredDeals.map(async (deal: any) => {
           try {
-            const msgResp = await rateLimitedFetch(
-              `https://graytag.co.kr/ws/chat/findChats?uuid=${deal.chatRoomUuid}&page=1`,
-              { headers: authedHeaders('https://graytag.co.kr/lender/deal/list'), redirect: 'manual', signal: AbortSignal.timeout(3000) }
-            );
-            if (!msgResp.ok) return;
-            const msgData = await safeJson(msgResp);
-            const messages: Array<{ message: string; owned: boolean; informationMessage: boolean }> = msgData.data?.data?.chats || [];
-            for (const msg of messages) {
-              if (!msg.owned || msg.informationMessage) continue;
-              const text = msg.message
-                .replace(/&#64;/g, '@')
-                .replace(/<br\s*\/?>\s*/gi, '\n')
-                .replace(/<[^>]+>/g, '');
-              const match = text.match(/아이디\s*:\s*([^\s\n<]+)/);
-              if (match) { deal.keepAcct = match[1].trim(); break; }
+            const chats: any[] = [];
+            for (let page = 1; page <= 3; page++) {
+              const msgResp = await rateLimitedFetch(
+                `https://graytag.co.kr/ws/chat/findChats?uuid=${encodeURIComponent(deal.chatRoomUuid)}&page=${page}`,
+                { headers: authedHeaders('https://graytag.co.kr/lender/deal/list'), redirect: 'manual', signal: AbortSignal.timeout(3000) }
+              );
+              if (!msgResp.ok) break;
+              const msgData = await safeJson(msgResp);
+              const pageChats: any[] = msgData.data?.data?.chats || [];
+              chats.push(...pageChats);
+              if (pageChats.length === 0 || pageChats.length < 20) break;
             }
+            const deliveredAccount = extractDeliveredAccountFromChats(chats);
+            if (deliveredAccount) deal.keepAcct = deliveredAccount;
           } catch { /* 실패해도 계속 */ }
         }));
       }
