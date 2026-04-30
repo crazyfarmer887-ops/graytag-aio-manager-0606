@@ -10,7 +10,14 @@ export interface AccountCheckDealLike {
   dealStatus?: string | null;
   lenderDealStatusName?: string | null;
   chatRoomUuid?: string | null;
+  chatroomUuid?: string | null;
+  roomUuid?: string | null;
   keepAcct?: string | null;
+  dealDetail?: {
+    chatRoomUuid?: string | null;
+    chatroomUuid?: string | null;
+    roomUuid?: string | null;
+  } | null;
 }
 
 export function normalizeGraytagChatText(value: string | null | undefined): string {
@@ -32,8 +39,20 @@ export function isAccountCheckPendingDeal(deal: AccountCheckDealLike): boolean {
   return status === 'DeliveredAndCheckPrepaid' || statusName.includes('계정확인중');
 }
 
+export function resolveDealChatRoomUuid(deal: AccountCheckDealLike): string {
+  return String(
+    deal.chatRoomUuid
+    || deal.chatroomUuid
+    || deal.roomUuid
+    || deal.dealDetail?.chatRoomUuid
+    || deal.dealDetail?.chatroomUuid
+    || deal.dealDetail?.roomUuid
+    || ''
+  ).trim();
+}
+
 export function shouldHydrateDeliveredAccountFromChat(deal: AccountCheckDealLike): boolean {
-  return isAccountCheckPendingDeal(deal) && Boolean(String(deal.chatRoomUuid || '').trim()) && !String(deal.keepAcct || '').trim();
+  return isAccountCheckPendingDeal(deal) && Boolean(resolveDealChatRoomUuid(deal)) && !String(deal.keepAcct || '').trim();
 }
 
 function cleanAccountCandidate(value: string): string {

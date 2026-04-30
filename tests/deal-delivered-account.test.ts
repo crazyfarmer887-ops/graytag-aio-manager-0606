@@ -1,10 +1,12 @@
 import { describe, expect, test } from 'vitest';
-import { extractDeliveredAccountFromChats, isAccountCheckPendingDeal, shouldHydrateDeliveredAccountFromChat } from '../src/lib/deal-delivered-account';
+import { extractDeliveredAccountFromChats, isAccountCheckPendingDeal, resolveDealChatRoomUuid, shouldHydrateDeliveredAccountFromChat } from '../src/lib/deal-delivered-account';
 
 describe('deal delivered account hydration', () => {
   test('targets account-check pending deals with a chat room and missing keepAcct', () => {
     expect(shouldHydrateDeliveredAccountFromChat({ dealStatus: 'DeliveredAndCheckPrepaid', chatRoomUuid: 'room-1', keepAcct: '' })).toBe(true);
     expect(shouldHydrateDeliveredAccountFromChat({ lenderDealStatusName: '계정확인중', chatRoomUuid: 'room-1', keepAcct: null })).toBe(true);
+    expect(shouldHydrateDeliveredAccountFromChat({ lenderDealStatusName: '계정확인중', dealDetail: { chatRoomUuid: 'nested-room' } } as any)).toBe(true);
+    expect(resolveDealChatRoomUuid({ dealDetail: { chatRoomUuid: 'nested-room' } } as any)).toBe('nested-room');
     expect(shouldHydrateDeliveredAccountFromChat({ dealStatus: 'DeliveredAndCheckPrepaid', chatRoomUuid: 'room-1', keepAcct: 'already@example.com' })).toBe(false);
   });
 

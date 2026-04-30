@@ -10,7 +10,7 @@ import { assertPriceChangeAllowed, loadPriceSafetyConfig, previewPriceChange, re
 import { loadSafeModeConfig, saveSafeModeConfig } from './safe-mode';
 import { generateSixDigitPin, makeEmailVerifyMemo, resolveEmailAliasFill, updateEmailAliasPin, verifyEmailAliasPinUpdate } from './email-alias-fill';
 import { buildFinishedDealsUrl } from '../lib/graytag-fill';
-import { extractDeliveredAccountFromChats, shouldHydrateDeliveredAccountFromChat } from '../lib/deal-delivered-account';
+import { extractDeliveredAccountFromChats, resolveDealChatRoomUuid, shouldHydrateDeliveredAccountFromChat } from '../lib/deal-delivered-account';
 import { planUndercutterPriceChange } from '../lib/undercutter-price';
 import { DEFAULT_MANAGEMENT_CACHE_TTL_MS, isAutoSessionManagementRequest, managementCache, shouldForceManagementRefresh } from './management-cache';
 import { buildProfileAuditRows, profileAuditKey, runProfileCheckPlaceholder, summarizeProfileAudit, type ProfileAuditRow, type ProfileAuditStore } from '../lib/profile-audit';
@@ -754,15 +754,16 @@ app.post('/my/management', async (c) => {
       if (deliveredDeals.length > 0) {
         await Promise.all(deliveredDeals.map(async (deal: any) => {
           try {
+            const chatRoomUuid = resolveDealChatRoomUuid(deal);
             const chats: any[] = [];
             for (let page = 1; page <= 3; page++) {
               const msgResp = await rateLimitedFetch(
-                `https://graytag.co.kr/ws/chat/findChats?uuid=${encodeURIComponent(deal.chatRoomUuid)}&page=${page}`,
+                `https://graytag.co.kr/ws/chat/findChats?uuid=${encodeURIComponent(chatRoomUuid)}&page=${page}`,
                 { headers: authedHeaders('https://graytag.co.kr/lender/deal/list'), redirect: 'manual', signal: AbortSignal.timeout(3000) }
               );
               if (!msgResp.ok) break;
               const msgData = await safeJson(msgResp);
-              const pageChats: any[] = msgData.data?.data?.chats || [];
+              const pageChats: any[] = extractGraytagChats(msgData);
               chats.push(...pageChats);
               if (pageChats.length === 0 || pageChats.length < 20) break;
             }

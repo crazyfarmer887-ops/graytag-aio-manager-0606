@@ -126,5 +126,6 @@ test('OTT home and navigation use the refreshed UI structure', () => {
   assert.doesNotMatch(read('src/api/index.ts'), /mergeTvingWavveServicesForManagement/);
   assert.match(read('src/api/index.ts'), /shouldHydrateDeliveredAccountFromChat/);
   assert.match(read('src/api/index.ts'), /extractDeliveredAccountFromChats/);
+  assert.match(read('src/api/index.ts'), /extractGraytagChats\(msgData\)/);
   assert.doesNotMatch(manage, /ANY product with a password from ANY account/);
 });
