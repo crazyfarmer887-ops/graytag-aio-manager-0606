@@ -20,6 +20,7 @@ import { extractGraytagChats, findLatestBuyerInquiryMessage } from './chat-messa
 import { mergePartyMaintenanceChecklistState, type PartyMaintenanceChecklistStore } from '../lib/party-maintenance-checklist';
 import { buildProfileAssignment, type ProfileAssignment } from '../lib/profile-nickname';
 import { buildGeneratedAccount, deleteGeneratedAccountFromStore, extractSimpleLoginAliasRef, generateAccountPassword, mergeGeneratedAccountsIntoManagement, nextGeneratedAliasPrefix, normalizeGeneratedAccountPatch, type GeneratedAccountStore, type SimpleLoginAliasRef } from '../lib/generated-accounts';
+import { mergeOnSaleAccountsIntoManagement } from '../lib/on-sale-accounts';
 import { resolveAutoReplyPolicy } from './auto-reply-policy';
 import { normalizeBuyerMessage, messageFingerprint, messageTimestamp, isBuyerTextMessage } from './auto-reply-message';
 import { createAutoReplyJob, listAutoReplyJobs, loadAutoReplyJobStore, saveAutoReplyJobStore, updateAutoReplyJob, type AutoReplyJobStore } from './auto-reply-jobs';
@@ -936,7 +937,8 @@ app.post('/my/management', async (c) => {
       cookieSource: body?.JSESSIONID?.trim() ? 'manual' : 'session-keeper',
       updatedAt: new Date().toISOString(),
     };
-    return mergeGeneratedAccountsIntoManagement(management, generatedStore);
+    const withGeneratedAccounts = mergeGeneratedAccountsIntoManagement(management, generatedStore);
+    return mergeOnSaleAccountsIntoManagement(withGeneratedAccounts, onSaleByKeepAcct);
   };
 
   try {
