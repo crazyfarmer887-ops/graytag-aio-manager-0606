@@ -106,8 +106,9 @@ test('OTT home and navigation use the refreshed UI structure', () => {
   assert.match(manage, /Email 대시보드 alias/);
   assert.match(manage, /티빙\+웨이브/);
   assert.match(manage, /더블이용권/);
-  assert.match(manage, /티빙 연결됨/);
-  assert.match(manage, /웨이브 연결됨/);
+  assert.doesNotMatch(manage, /티빙 연결됨/);
+  assert.doesNotMatch(manage, /웨이브 연결됨/);
+  assert.doesNotMatch(manage, /doublePassBundle/);
   assert.match(manage, /generated-accounts\/create/);
   assert.match(manage, /생성만 완료/);
   assert.match(manage, /결제 완료/);
@@ -122,5 +123,6 @@ test('OTT home and navigation use the refreshed UI structure', () => {
   assert.match(read('src/api/index.ts'), /api\/v2\/alias\/custom\/new/);
   assert.match(read('src/api/index.ts'), /DELETE.*api\/aliases/);
   assert.match(read('src/api/index.ts'), /mergeGeneratedAccountsIntoManagement/);
+  assert.doesNotMatch(read('src/api/index.ts'), /mergeTvingWavveServicesForManagement/);
   assert.doesNotMatch(manage, /ANY product with a password from ANY account/);
 });

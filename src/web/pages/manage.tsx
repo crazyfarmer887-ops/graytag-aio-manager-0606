@@ -30,15 +30,6 @@ interface Account {
     pin: string;
     memo: string;
   };
-  doublePassBundle?: {
-    bundleId: string;
-    bundleNo: number;
-    source: 'auto-number' | 'manual-exception' | 'unpaired';
-    hasTving: boolean;
-    hasWavve: boolean;
-    tvingLoginId?: string;
-    wavveAccountId?: string;
-  };
 }
 interface ServiceGroup { serviceType: string; accounts: Account[]; totalUsingMembers: number; totalActiveMembers: number; totalIncome: number; totalRealized: number; }
 interface ManageData {
@@ -985,12 +976,6 @@ export default function ManagePage() {
                                   {acct.generatedAccount && <span style={{ fontSize:10, color:acct.generatedAccount.paymentStatus==='paid'?'#059669':'#C2410C', fontWeight:900, display:'flex', alignItems:'center', gap:3, background:acct.generatedAccount.paymentStatus==='paid'?'#ECFDF5':'#FFEDD5', borderRadius:6, padding:'1px 7px' }}>
                                     <KeyRound size={10} /> {acct.generatedAccount.paymentStatus==='paid'?'결제 완료':'생성만 완료'}
                                   </span>}
-                                  {acct.doublePassBundle && <span style={{ fontSize:10, color:'#7C3AED', fontWeight:900, display:'flex', alignItems:'center', gap:3, background:'#EDE9FE', borderRadius:6, padding:'1px 7px' }}>
-                                    더블이용권 #{acct.doublePassBundle.bundleNo}
-                                  </span>}
-                                  {acct.doublePassBundle?.hasTving && <span style={{ fontSize:10, color:'#2563EB', fontWeight:800, background:'#EFF6FF', borderRadius:6, padding:'1px 7px' }}>티빙 연결됨</span>}
-                                  {acct.doublePassBundle?.hasWavve && <span style={{ fontSize:10, color:'#059669', fontWeight:800, background:'#ECFDF5', borderRadius:6, padding:'1px 7px' }}>웨이브 연결됨</span>}
-                                  {acct.doublePassBundle?.source === 'manual-exception' && <span style={{ fontSize:10, color:'#C2410C', fontWeight:800, background:'#FFEDD5', borderRadius:6, padding:'1px 7px' }}>예외 매칭</span>}
                                   {vi.vacancy === 0 && <span style={{ fontSize:10, color:'#059669', fontWeight:600, display:'flex', alignItems:'center', gap:3 }}><TrendingUp size={10} /> 만석</span>}
                                   {vi.vacancy > 0 && vi.unfilled > 0 && (
                                     <span style={{ fontSize:10, color:'#EF4444', fontWeight:700, display:'flex', alignItems:'center', gap:3, background:'#FFF0F0', borderRadius:6, padding:'1px 7px' }}>
