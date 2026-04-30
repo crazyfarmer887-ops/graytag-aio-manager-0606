@@ -71,6 +71,27 @@ export interface ServiceStat {
   monthlyNet: number;
 }
 
+export interface MonthlyNetProfitServiceDetail {
+  serviceType: string;
+  accountCount: number;
+  partyMemberCount: number;
+  grossIncome: number;
+  graytagFee: number;
+  subscriptionCost: number;
+  netProfit: number;
+}
+
+export interface MonthlyNetProfitSummary {
+  totalRevenue: number;
+  totalGrossIncome: number;
+  graytagFee: number;
+  subscriptionCost: number;
+  maintenanceCost: number;
+  manualIncome: number;
+  netProfit: number;
+  svcDetails: MonthlyNetProfitServiceDetail[];
+}
+
 export interface ExpiredPartyItem {
   dealUsid: string;
   serviceType: string;
@@ -123,6 +144,14 @@ const PARTY_MAX: Record<string, number> = {
   '넷플릭스': 5,
 };
 
+export const GRAYTAG_NET_RATE = 0.9;
+export const OTT_MONTHLY_SUBSCRIPTION_COST: Record<string, number> = {
+  '넷플릭스': 17000,
+  '디즈니플러스': 14000,
+  '웨이브': 10000,
+  '티빙': 10000,
+};
+
 const EXCLUDED_SERVICES = new Set(['왓챠', '애플원', '유튜브', '왓챠플레이']);
 const CANCELLED_STATUSES = new Set([
   'CancelByInspectionRejection',
@@ -167,6 +196,85 @@ export function buildServiceStats(data: DashboardData, _manuals: DashboardManual
     })
     .filter((stat) => stat.accountCount > 0)
     .sort((a, b) => b.usingMembers - a.usingMembers || b.accountCount - a.accountCount);
+}
+
+function parseNormalizedDate(value: string | null | undefined): Date | null {
+  const iso = normalizeDate(value);
+  if (!iso) return null;
+  const date = new Date(`${iso}T00:00:00Z`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function activeMemberMonthlyGross(member: DashboardMember): number {
+  if (!ACTIVE_STATUSES.has(member.status) || member.purePrice <= 0) return 0;
+  const start = parseNormalizedDate(member.startDateTime);
+  const end = parseNormalizedDate(member.endDateTime);
+  const days = start && end
+    ? Math.max(1, Math.ceil((end.getTime() - start.getTime()) / 86400000))
+    : 30;
+  return member.purePrice / days * 30;
+}
+
+export function buildMonthlyNetProfitSummary(data: DashboardData | null): MonthlyNetProfitSummary {
+  if (!data) {
+    return {
+      totalRevenue: 0,
+      totalGrossIncome: 0,
+      graytagFee: 0,
+      subscriptionCost: 0,
+      maintenanceCost: 0,
+      manualIncome: 0,
+      netProfit: 0,
+      svcDetails: [],
+    };
+  }
+
+  const svcDetails: MonthlyNetProfitServiceDetail[] = [];
+
+  for (const svc of data.services) {
+    if (EXCLUDED_SERVICES.has(svc.serviceType)) continue;
+    const accounts = svc.accounts.filter(shouldCountAccount);
+    if (accounts.length === 0) continue;
+
+    const rawGrossIncome = accounts.reduce((sum, account) => (
+      sum + account.members.reduce((memberSum, member) => memberSum + activeMemberMonthlyGross(member), 0)
+    ), 0);
+    const grossIncome = Math.round(rawGrossIncome);
+    const graytagFee = Math.round(grossIncome * (1 - GRAYTAG_NET_RATE));
+    const subscriptionCost = (OTT_MONTHLY_SUBSCRIPTION_COST[svc.serviceType] || 0) * accounts.length;
+    const netProfit = Math.round(grossIncome * GRAYTAG_NET_RATE) - subscriptionCost;
+    const partyMemberCount = accounts.reduce(
+      (sum, account) => sum + account.members.filter((member) => ACTIVE_STATUSES.has(member.status) && member.purePrice > 0).length,
+      0,
+    );
+
+    svcDetails.push({
+      serviceType: svc.serviceType,
+      accountCount: accounts.length,
+      partyMemberCount,
+      grossIncome,
+      graytagFee,
+      subscriptionCost,
+      netProfit,
+    });
+  }
+
+  svcDetails.sort((a, b) => b.netProfit - a.netProfit);
+  const totalGrossIncome = svcDetails.reduce((sum, svc) => sum + svc.grossIncome, 0);
+  const graytagFee = svcDetails.reduce((sum, svc) => sum + svc.graytagFee, 0);
+  const subscriptionCost = svcDetails.reduce((sum, svc) => sum + svc.subscriptionCost, 0);
+  const netProfit = svcDetails.reduce((sum, svc) => sum + svc.netProfit, 0);
+
+  return {
+    totalRevenue: netProfit,
+    totalGrossIncome,
+    graytagFee,
+    subscriptionCost,
+    maintenanceCost: subscriptionCost,
+    manualIncome: 0,
+    netProfit,
+    svcDetails,
+  };
 }
 
 function normalizeDate(value: string | null | undefined): string {

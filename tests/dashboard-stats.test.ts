@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { buildDailyInflow, buildExpiredPartyItems, buildPartyMaintenanceTargets, buildServiceStats } from '../src/web/lib/dashboard-stats';
+import { buildDailyInflow, buildExpiredPartyItems, buildMonthlyNetProfitSummary, buildPartyMaintenanceTargets, buildServiceStats } from '../src/web/lib/dashboard-stats';
 
 const data = {
   services: [
@@ -88,6 +88,26 @@ describe('dashboard stats', () => {
       maxSlots: 15,
     });
     expect(stats[0].fillRatio).toBeCloseTo(4 / 15);
+  });
+
+  test('calculates monthly net profit from daily member prices, Graytag fee, and OTT subscription cost', () => {
+    const summary = buildMonthlyNetProfitSummary(data);
+    expect(summary.netProfit).toBe(-44754);
+    expect(summary.totalGrossIncome).toBe(6940);
+    expect(summary.graytagFee).toBe(694);
+    expect(summary.subscriptionCost).toBe(51000);
+    expect(summary.manualIncome).toBe(0);
+    expect(summary.svcDetails).toEqual([
+      {
+        serviceType: '넷플릭스',
+        accountCount: 3,
+        partyMemberCount: 4,
+        grossIncome: 6940,
+        graytagFee: 694,
+        subscriptionCost: 51000,
+        netProfit: -44754,
+      },
+    ]);
   });
 
   test('builds expired party items and excludes cancelled deals from the expired party component', () => {

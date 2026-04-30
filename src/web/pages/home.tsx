@@ -3,7 +3,7 @@ import ManagePage from "./manage";
 import { MonthlyCalendarWidget } from "./profit";
 import { useLocation } from "wouter";
 import { CATEGORIES } from "../lib/constants";
-import { buildDailyInflow, buildPartyMaintenanceTargets, buildServiceStats, type PartyMaintenanceTarget } from "../lib/dashboard-stats";
+import { buildDailyInflow, buildMonthlyNetProfitSummary, buildPartyMaintenanceTargets, buildServiceStats, type PartyMaintenanceTarget } from "../lib/dashboard-stats";
 import { buildLatestChatMessages, type ChatAlertItem, type ChatAlertRoom } from "../lib/chat-alerts";
 import { buildPartyMaintenanceChecklistItems, generateMaintenancePassword, mergePartyMaintenanceChecklistState, splitPartyMaintenanceChecklistItems, type PartyMaintenanceChecklistItem, type PartyMaintenanceChecklistState, type PartyMaintenanceChecklistStore } from "../../lib/party-maintenance-checklist";
 import { RefreshCw, ChevronRight, User, Loader2, TrendingUp, TrendingDown, Wallet, CheckCircle2, RotateCcw, Settings, Zap, ShieldAlert, Bell, MessageCircle } from "lucide-react";
@@ -81,98 +81,7 @@ const loadCookies = (): CookieSet[] => {
   catch { return [AUTO_COOKIE]; }
 };
 
-// ─── 풀파티 기준 월 순수익 (수수료·파티유지비용 모두 차감 후) ──────
-// 추가없음 / 추가있음 두 가지 상수
-const FULL_PARTY_NET_BASE: Record<string, number> = {
-  '넷플릭스':    15000,
-  '디즈니플러스':  5000,
-  '티빙':        26000,
-  '웨이브':          0,   // 추가없음 미정 → 0 (알게 되면 업데이트)
-};
-const FULL_PARTY_NET_EXTRA: Record<string, number> = {
-  '넷플릭스':    23000,
-  '디즈니플러스':  8000,
-  '티빙':        36000,
-  '웨이브':       1000,
-};
-
-const PARTY_MAX: Record<string, number> = {
-  '디즈니플러스': 6, '왓챠플레이': 4, '티빙': 4, '웨이브': 4, '넷플릭스': 5,
-};
-const getPartyMax = (svc: string) => PARTY_MAX[svc] || 6;
-const EXCLUDED_SERVICES = ['왓챠', '애플원', '유튜브', '왓챠플레이'];
-
-// 계정 파티 기간 개월수 계산 (그레이태그 데이터 기반)
-function calcAccountMonths(acct: any): number {
-  let earliest: Date | null = null;
-  let latest: Date | null = null;
-  for (const m of acct.members || []) {
-    const sd = m.startDateTime ? new Date(m.startDateTime.replace(/\s/g,'').replace(/\./g,'-').replace(/-$/,'')) : null;
-    const ed = m.endDateTime   ? new Date(m.endDateTime.replace(/\s/g,'').replace(/\./g,'-').replace(/-$/,''))   : null;
-    if (sd && !isNaN(sd.getTime()) && (!earliest || sd < earliest)) earliest = sd;
-    if (ed && !isNaN(ed.getTime()) && (!latest   || ed > latest))   latest   = ed;
-  }
-  if (!earliest || !latest) return 1;
-  const months = (latest.getFullYear() - earliest.getFullYear()) * 12
-               + (latest.getMonth() - earliest.getMonth()) + 1;
-  return Math.max(1, months);
-}
-
-// 수익 종합 계산 (풀파티 기준)
-interface ProfitSvcDetail { serviceType: string; accountCount: number; netProfit: number; }
-interface ProfitSummary {
-  totalRevenue: number;
-  maintenanceCost: number;
-  manualIncome: number;
-  netProfit: number;
-  svcDetails: ProfitSvcDetail[];
-}
-function calcProfitSummary(data: ManageData | null, extraShareOn: Record<string, boolean>, manuals: ManualMember[]): ProfitSummary {
-  if (!data) return { totalRevenue: 0, maintenanceCost: 0, manualIncome: 0, netProfit: 0, svcDetails: [] };
-
-  let totalNet = 0;
-  const svcMap: Record<string, { accounts: number; net: number }> = {};
-
-  for (const svc of data.services) {
-    if (EXCLUDED_SERVICES.includes(svc.serviceType)) continue;
-    const activeAccounts = svc.accounts.filter((a: any) => a.usingCount > 0 || a.activeCount > 0);
-
-    for (const acct of activeAccounts) {
-      const key = `${acct.email}__${svc.serviceType}`;
-      const isOn = key in extraShareOn ? extraShareOn[key] : true;
-      const monthlyNet = isOn
-        ? (FULL_PARTY_NET_EXTRA[svc.serviceType] ?? FULL_PARTY_NET_BASE[svc.serviceType] ?? 0)
-        : (FULL_PARTY_NET_BASE[svc.serviceType] ?? 0);
-      const months = calcAccountMonths(acct);
-      const acctNet = monthlyNet * months;
-      totalNet += acctNet;
-      if (!svcMap[svc.serviceType]) svcMap[svc.serviceType] = { accounts: 0, net: 0 };
-      svcMap[svc.serviceType].accounts++;
-      svcMap[svc.serviceType].net += acctNet;
-    }
-  }
-
-  // 수동 파티원 수입
-  const today = new Date().toISOString().split('T')[0];
-  const manualIncome = manuals
-    .filter(m => m.status !== 'cancelled' && m.startDate <= today && m.endDate >= today)
-    .reduce((s, m) => s + m.price, 0);
-
-  const netProfit = totalNet + manualIncome;
-  const svcDetails: ProfitSvcDetail[] = Object.entries(svcMap)
-    .map(([serviceType, v]) => ({ serviceType, accountCount: v.accounts, netProfit: v.net }))
-    .sort((a, b) => b.netProfit - a.netProfit);
-
-  return {
-    totalRevenue: netProfit,
-    maintenanceCost: 0,
-    manualIncome,
-    netProfit,
-    svcDetails,
-  };
-}
-
-// 수동 파티원 중 오늘 기준 active(이용 중) 수 계산
+// ─── 수동 파티원 중 오늘 기준 active(이용 중) 수 계산 ────────
 function getActiveManualCount(manuals: ManualMember[], serviceType: string, accountEmail: string): number {
   const today = new Date().toISOString().split('T')[0];
   return manuals.filter(m =>
@@ -901,14 +810,8 @@ export default function HomePage() {
   const totalAccounts = stats.reduce((s, st) => s + st.accountCount, 0);
   const totalVacancy = totalMaxSlots - totalUsing;
 
-  // 추가공유 ON/OFF 상태 (profit.tsx에서 저장된 상태 읽음)
-  const getExtraShareState = (): Record<string, boolean> => {
-    try { return JSON.parse(localStorage.getItem('graytag_extra_share_v2') || '{}'); } catch { return {}; }
-  };
-
-  // 수익 종합 계산
-  const summary = calcProfitSummary(data, getExtraShareState(), manuals);
-  const manualIncome = summary.manualIncome;
+  // 수익 종합 계산: 0.9 × 인당 일 가격 × 30일 × 파티인원 수 - 파티별 OTT 구독료
+  const summary = buildMonthlyNetProfitSummary(data);
   const realNetProfit = summary.netProfit;
 
   const formatTime = (iso: string) => {
@@ -1042,7 +945,7 @@ export default function HomePage() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
               <StatCard label="계정" value={`${totalAccounts}개`} helper="활성 운영 계정" tone="info" />
               <StatCard label="파티원" value={`${totalUsing}/${totalMaxSlots}`} helper={`빈자리 ${Math.max(0, totalVacancy)}개`} tone={totalVacancy > 0 ? 'warning' : 'success'} />
-              <StatCard label="예상 순수익" value={`${realNetProfit.toLocaleString()}원`} helper={manualIncome > 0 ? `수동 +${manualIncome.toLocaleString()}원 포함` : '풀파티 기준'} tone={realNetProfit >= 0 ? 'success' : 'danger'} />
+              <StatCard label="예상 순수익" value={`${realNetProfit.toLocaleString()}원`} helper="일단가×30×인원×0.9 - 구독료" tone={realNetProfit >= 0 ? 'success' : 'danger'} />
               <StatCard label="채움률" value={`${totalMaxSlots > 0 ? Math.round(totalUsing / totalMaxSlots * 100) : 0}%`} helper="서비스 전체 기준" tone={totalVacancy > 0 ? 'warning' : 'success'} />
             </div>
           </section>
@@ -1103,17 +1006,17 @@ export default function HomePage() {
             borderRadius: 20, padding: '20px', marginBottom: 20, color: '#fff',
           }}>
             <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: 12, padding: '12px', marginBottom: 14, textAlign: 'center' }}>
-              <p style={{ fontSize: 11, opacity: 0.75, margin: 0, fontWeight: 500 }}>{"풀파티 기준 월 순수익"}</p>
+              <p style={{ fontSize: 11, opacity: 0.75, margin: 0, fontWeight: 500 }}>{"월 순수익 · 일단가×30×인원×0.9 - 구독료"}</p>
               <p style={{ fontSize: 32, fontWeight: 800, margin: '6px 0 0', lineHeight: 1 }}>{realNetProfit.toLocaleString()}{"원"}</p>
-              {manualIncome > 0 && (
-                <p style={{ fontSize: 10, opacity: 0.7, margin: '4px 0 0' }}>{"수동 포함 +"}{manualIncome.toLocaleString()}{"원"}</p>
-              )}
+              <p style={{ fontSize: 10, opacity: 0.75, margin: '4px 0 0' }}>
+                {"월 총수입 "}{summary.totalGrossIncome.toLocaleString()}{"원 · 수수료 -"}{summary.graytagFee.toLocaleString()}{"원 · 구독료 -"}{summary.subscriptionCost.toLocaleString()}{"원"}
+              </p>
               {/* 서비스별 순수익 상세 */}
               {summary.svcDetails.length > 0 && (
                 <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 3 }}>
                   {summary.svcDetails.map(d => (
                     <div key={d.serviceType} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.12)', borderRadius: 7, padding: '4px 10px' }}>
-                      <span style={{ fontSize: 11, fontWeight: 600 }}>{d.serviceType} {d.accountCount}계정</span>
+                      <span style={{ fontSize: 11, fontWeight: 600 }}>{d.serviceType} {d.accountCount}파티 · {d.partyMemberCount}명</span>
                       <span style={{ fontSize: 11, fontWeight: 700 }}>{(d.netProfit / 10000).toFixed(1)}만원</span>
                     </div>
                   ))}
@@ -1135,11 +1038,6 @@ export default function HomePage() {
                   <span style={{ fontSize: 10, opacity: 0.8 }}>
                     {"📊 "}{totalAccounts}{"계정 · 빈자리 "}{totalVacancy}
                   </span>
-                  {manualIncome > 0 && (
-                    <span style={{ fontSize: 10, opacity: 0.8 }}>
-                      {"✋ 수동 +"}{manualIncome.toLocaleString()}{"원"}
-                    </span>
-                  )}
                 </div>
               </div>
               <div style={{ background: 'rgba(255,255,255,0.18)', borderRadius: 12, padding: '10px 14px', textAlign: 'right', minWidth: 120 }}>
