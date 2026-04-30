@@ -85,7 +85,7 @@ function fallbackSortValue(_room: ChatAlertRoom, index: number): number {
   return -index;
 }
 
-export function buildChatAlerts(rooms: ChatAlertRoom[] = [], limit = 5): ChatAlertItem[] {
+function chatAlertItems(rooms: ChatAlertRoom[] = []): ChatAlertItem[] {
   return rooms
     .map((room, index): ChatAlertItem | null => {
       const cleanMessage = stripChatMessage(room.lastMessage || '');
@@ -113,8 +113,18 @@ export function buildChatAlerts(rooms: ChatAlertRoom[] = [], limit = 5): ChatAle
         title: `${buyerName} · ${serviceType} · ${account}`,
       };
     })
-    .filter((item): item is ChatAlertItem => Boolean(item))
+    .filter((item): item is ChatAlertItem => Boolean(item));
+}
+
+export function buildChatAlerts(rooms: ChatAlertRoom[] = [], limit = 5): ChatAlertItem[] {
+  return chatAlertItems(rooms)
     .sort((a, b) => Number(b.unread) - Number(a.unread) || b.sortTime - a.sortTime)
+    .slice(0, limit);
+}
+
+export function buildLatestChatMessages(rooms: ChatAlertRoom[] = [], limit = 10): ChatAlertItem[] {
+  return chatAlertItems(rooms)
+    .sort((a, b) => b.sortTime - a.sortTime)
     .slice(0, limit);
 }
 

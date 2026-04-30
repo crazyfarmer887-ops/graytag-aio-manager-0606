@@ -4,7 +4,7 @@ import { MonthlyCalendarWidget } from "./profit";
 import { useLocation } from "wouter";
 import { CATEGORIES } from "../lib/constants";
 import { buildDailyInflow, buildPartyMaintenanceTargets, buildServiceStats, type PartyMaintenanceTarget } from "../lib/dashboard-stats";
-import { buildChatAlerts, buildUnreadChatAlerts, type ChatAlertItem, type ChatAlertRoom } from "../lib/chat-alerts";
+import { buildLatestChatMessages, type ChatAlertItem, type ChatAlertRoom } from "../lib/chat-alerts";
 import { buildPartyMaintenanceChecklistItems, generateMaintenancePassword, mergePartyMaintenanceChecklistState, splitPartyMaintenanceChecklistItems, type PartyMaintenanceChecklistItem, type PartyMaintenanceChecklistState, type PartyMaintenanceChecklistStore } from "../../lib/party-maintenance-checklist";
 import { RefreshCw, ChevronRight, User, Loader2, TrendingUp, TrendingDown, Wallet, CheckCircle2, RotateCcw, Settings, Zap, ShieldAlert, Bell, MessageCircle } from "lucide-react";
 import { Card, StatCard } from "../components/ui/card";
@@ -688,8 +688,8 @@ function PartyMaintenancePanel({ items, regeneratingPinKey, onUpdate, onRegenera
   );
 }
 
-function ChatAlertsPanel({ alerts, unreadAlerts, unreadCount, loading, updatedAt, fromCache, rateLimited, hydrationFailedCount, error, onOpenChat }: { alerts: ChatAlertItem[]; unreadAlerts: ChatAlertItem[]; unreadCount: number; loading: boolean; updatedAt: string | null; fromCache: boolean; rateLimited: boolean; hydrationFailedCount: number; error: string | null; onOpenChat: () => void }) {
-  const displayAlerts = unreadAlerts.length > 0 ? unreadAlerts : alerts;
+function ChatAlertsPanel({ alerts, unreadCount, loading, updatedAt, fromCache, rateLimited, hydrationFailedCount, error, onOpenChat }: { alerts: ChatAlertItem[]; unreadCount: number; loading: boolean; updatedAt: string | null; fromCache: boolean; rateLimited: boolean; hydrationFailedCount: number; error: string | null; onOpenChat: () => void }) {
+  const displayAlerts = alerts;
   return (
     <Card tone={unreadCount > 0 ? 'warning' : 'info'} style={{ marginBottom: 16 }}>
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, marginBottom:10 }}>
@@ -698,7 +698,7 @@ function ChatAlertsPanel({ alerts, unreadAlerts, unreadCount, loading, updatedAt
           <div style={{ minWidth:0 }}>
             <div style={{ fontSize:14, fontWeight:900, color:'#1E1B4B' }}>실시간 채팅 알림</div>
             <div style={{ fontSize:10, color:'#9CA3AF', marginTop:2 }}>
-              {unreadCount > 0 ? `안 읽은 구매자 문의 ${unreadCount}개` : '최근 실제 구매자 메시지'} · {updatedAt ? `${updatedAt} 갱신` : '확인 중'}
+              {unreadCount > 0 ? `안 읽은 구매자 문의 ${unreadCount}개` : '안 읽은 문의 없음'} · 최신 메시지 10개 · {updatedAt ? `${updatedAt} 갱신` : '확인 중'}
             </div>
             <div style={{ display:'flex', gap:5, flexWrap:'wrap', marginTop:5 }}>
               {fromCache && <span style={{ fontSize:9, fontWeight:900, color:'#92400E', background:'#FEF3C7', borderRadius:999, padding:'2px 6px' }}>캐시 표시중</span>}
@@ -711,14 +711,14 @@ function ChatAlertsPanel({ alerts, unreadAlerts, unreadCount, loading, updatedAt
           <MessageCircle size={13} /> 채팅 열기
         </button>
       </div>
-      <div style={{ fontSize:12, fontWeight:900, color:unreadAlerts.length > 0 ? '#92400E' : '#6B21A8', marginBottom:8 }}>
-        {unreadAlerts.length > 0 ? '안 읽은 문의 내용' : '최근 실제 구매자 메시지'}
+      <div style={{ fontSize:12, fontWeight:900, color:'#6B21A8', marginBottom:8 }}>
+        최신 메시지 10개
       </div>
       {error && <div style={{ background:'#FFF0F0', color:'#EF4444', borderRadius:10, padding:'8px 10px', fontSize:11, marginBottom:8 }}>{error}</div>}
       {loading && displayAlerts.length === 0 ? (
         <div style={{ color:'#9CA3AF', fontSize:12, padding:'10px 0' }}>채팅 알림 조회중...</div>
       ) : displayAlerts.length === 0 ? (
-        <div style={{ color:'#9CA3AF', fontSize:12, padding:'10px 0' }}>새 구매자 문의가 없어요.</div>
+        <div style={{ color:'#9CA3AF', fontSize:12, padding:'10px 0' }}>표시할 최근 구매자 메시지가 없어요.</div>
       ) : (
         <div style={{ display:'flex', flexDirection:'column', gap:7 }}>
           {displayAlerts.map(alert => (
@@ -745,7 +745,6 @@ export default function HomePage() {
   const [safeMode, setSafeMode] = useState<SafeModeState | null>(null);
   const [safeModeSaving, setSafeModeSaving] = useState(false);
   const [chatAlerts, setChatAlerts] = useState<ChatAlertItem[]>([]);
-  const [unreadChatAlerts, setUnreadChatAlerts] = useState<ChatAlertItem[]>([]);
   const [chatUnreadCount, setChatUnreadCount] = useState(0);
   const [chatUpdatedAt, setChatUpdatedAt] = useState<string | null>(null);
   const [chatLoading, setChatLoading] = useState(false);
@@ -825,11 +824,9 @@ export default function HomePage() {
       const res = await fetch('/api/chat/rooms');
       const json = await res.json() as { rooms?: ChatAlertRoom[]; unreadCount?: number; updatedAt?: string; error?: string; fromCache?: boolean; rateLimited?: boolean; messageHydrationFailedCount?: number };
       if (!res.ok) throw new Error(json.error || '채팅 알림 조회 실패');
-      const alerts = buildChatAlerts(json.rooms || [], 5);
-      const unreadAlerts = buildUnreadChatAlerts(json.rooms || [], 5);
+      const alerts = buildLatestChatMessages(json.rooms || [], 10);
       setChatAlerts(alerts);
-      setUnreadChatAlerts(unreadAlerts);
-      setChatUnreadCount(json.unreadCount ?? unreadAlerts.length);
+      setChatUnreadCount(json.unreadCount ?? alerts.filter((item) => item.unread).length);
       setChatUpdatedAt(json.updatedAt ? formatShortTime(json.updatedAt) : formatShortTime(new Date().toISOString()));
       setChatFromCache(Boolean(json.fromCache));
       setChatRateLimited(Boolean(json.rateLimited));
@@ -1068,7 +1065,6 @@ export default function HomePage() {
 
           <ChatAlertsPanel
             alerts={chatAlerts}
-            unreadAlerts={unreadChatAlerts}
             unreadCount={chatUnreadCount}
             loading={chatLoading}
             updatedAt={chatUpdatedAt}

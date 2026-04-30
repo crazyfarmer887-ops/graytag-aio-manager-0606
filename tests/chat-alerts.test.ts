@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { buildChatAlerts, buildUnreadChatAlerts, parseChatTime } from '../src/web/lib/chat-alerts';
+import { buildChatAlerts, buildLatestChatMessages, buildUnreadChatAlerts, parseChatTime } from '../src/web/lib/chat-alerts';
 
 describe('chat alerts', () => {
   test('shows unread buyer inquiries first with buyer, service, product and message', () => {
@@ -71,6 +71,25 @@ describe('chat alerts', () => {
     expect(alerts[0].missingMessage).toBe(true);
     expect(alerts[0].message).toContain('내용을 불러오지 못했어요');
     expect(alerts[0].accountLabel).toBe('crazyfarmer@kakao.com');
+  });
+
+  test('builds latest 10 messages from read and unread rooms by actual message time', () => {
+    const rooms = Array.from({ length: 12 }, (_, index) => ({
+      dealUsid: `latest-${index}`,
+      chatRoomUuid: `latest-room-${index}`,
+      borrowerName: `구매자${index}`,
+      productType: '웨이브',
+      productName: '웨이브',
+      lenderChatUnread: index === 0,
+      lastMessage: `메시지${index}`,
+      lastMessageTime: `2026.04.${String(index + 1).padStart(2, '0')} 10:00`,
+    }));
+    const alerts = buildLatestChatMessages(rooms as any, 10);
+
+    expect(alerts).toHaveLength(10);
+    expect(alerts.map((item) => item.buyerName).slice(0, 3)).toEqual(['구매자11', '구매자10', '구매자9']);
+    expect(alerts.some((item) => item.buyerName === '구매자0')).toBe(false);
+    expect(alerts.some((item) => item.unread === false)).toBe(true);
   });
 
   test('parses Graytag dotted dates and sorts unread rooms by message time', () => {
