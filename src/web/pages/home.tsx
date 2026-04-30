@@ -3,7 +3,7 @@ import ManagePage from "./manage";
 import { MonthlyCalendarWidget } from "./profit";
 import { useLocation } from "wouter";
 import { CATEGORIES } from "../lib/constants";
-import { buildPartyMaintenanceTargets, buildServiceStats, type PartyMaintenanceTarget } from "../lib/dashboard-stats";
+import { buildDailyInflow, buildPartyMaintenanceTargets, buildServiceStats, type PartyMaintenanceTarget } from "../lib/dashboard-stats";
 import { buildChatAlerts, buildUnreadChatAlerts, type ChatAlertItem, type ChatAlertRoom } from "../lib/chat-alerts";
 import { buildPartyMaintenanceChecklistItems, generateMaintenancePassword, mergePartyMaintenanceChecklistState, splitPartyMaintenanceChecklistItems, type PartyMaintenanceChecklistItem, type PartyMaintenanceChecklistState, type PartyMaintenanceChecklistStore } from "../../lib/party-maintenance-checklist";
 import { RefreshCw, ChevronRight, User, Loader2, TrendingUp, TrendingDown, Wallet, CheckCircle2, RotateCcw, Settings, Zap, ShieldAlert, Bell, MessageCircle } from "lucide-react";
@@ -205,67 +205,14 @@ const findCategory = (svcType: string) =>
   CATEGORIES.find(c => c.label === svcType || svcType.includes(c.label.slice(0, 2)));
 
 // ─── 일별 파티 유입 그래프 ──────────────────────────────────────
-interface InflowEntry { name: string | null; serviceType: string; accountEmail: string; startDate: string; endDate: string | null; price: string; }
-
-function parseGrayDate(s: string | null): string | null {
-  if (!s) return null;
-  // "26. 03. 14" 또는 "2026. 03. 14" 형태
-  const parts = s.trim().split('.').map(p => p.trim()).filter(Boolean);
-  if (parts.length >= 3) {
-    let y = parseInt(parts[0]); if (y < 100) y += 2000;
-    const m = parseInt(parts[1]).toString().padStart(2, '0');
-    const d = parseInt(parts[2]).toString().padStart(2, '0');
-    return `${y}-${m}-${d}`;
-  }
-  // ISO 형태도 처리
-  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
-  return null;
-}
-
-function buildDailyInflow(data: ManageData, days: number = 30): { date: string; label: string; count: number; members: InflowEntry[] }[] {
-  const countMap: Record<string, number> = {};
-  const memberMap: Record<string, InflowEntry[]> = {};
-
-  for (const svc of data.services) {
-    for (const acct of svc.accounts) {
-      for (const member of acct.members) {
-        const iso = parseGrayDate(member.startDateTime);
-        if (iso) {
-          countMap[iso] = (countMap[iso] || 0) + 1;
-          if (!memberMap[iso]) memberMap[iso] = [];
-          memberMap[iso].push({
-            name: member.name,
-            serviceType: svc.serviceType,
-            accountEmail: acct.email,
-            startDate: iso,
-            endDate: parseGrayDate(member.endDateTime),
-            price: member.price,
-          });
-        }
-      }
-    }
-  }
-
-  const result: { date: string; label: string; count: number; members: InflowEntry[] }[] = [];
-  const now = new Date();
-  for (let i = days - 1; i >= 0; i--) {
-    const d = new Date(now);
-    d.setDate(d.getDate() - i);
-    const iso = d.toISOString().split('T')[0];
-    const label = `${d.getMonth() + 1}/${d.getDate()}`;
-    result.push({ date: iso, label, count: countMap[iso] || 0, members: memberMap[iso] || [] });
-  }
-  return result;
-}
-
 const SVC_COLORS: Record<string, string> = {
   '넷플릭스': '#E50914', '디즈니플러스': '#0063E5', '티빙': '#FF153C', '웨이브': '#006EFF', '왓챠': '#FF0558',
 };
 
-function DailyInflowChart({ data }: { data: ManageData }) {
+function DailyInflowChart({ data, manuals }: { data: ManageData; manuals: ManualMember[] }) {
   const [range, setRange] = useState<14 | 30>(14);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
-  const rows = buildDailyInflow(data, range);
+  const rows = buildDailyInflow(data, manuals, { days: range });
   const maxCount = Math.max(...rows.map(r => r.count), 1);
   const totalInflow = rows.reduce((s, r) => s + r.count, 0);
   const todayCount = rows[rows.length - 1]?.count ?? 0;
@@ -381,6 +328,7 @@ function DailyInflowChart({ data }: { data: ManageData }) {
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <span style={{ fontSize: 12, fontWeight: 700, color: '#1E1B4B' }}>{m.name || '(이름없음)'}</span>
                     <span style={{ fontSize: 10, color: '#7C3AED', marginLeft: 6, fontWeight: 600 }}>{m.serviceType}</span>
+                    {m.source === 'manual' && <span style={{ fontSize: 9, color: '#059669', marginLeft: 5, fontWeight: 800, background: '#ECFDF5', borderRadius: 999, padding: '1px 5px' }}>수동</span>}
                   </div>
                   <div style={{ fontSize: 10, color: '#6B7280', whiteSpace: 'nowrap' }}>
                     {m.startDate}{m.endDate ? ` ~ ${m.endDate}` : ''}
@@ -1297,7 +1245,7 @@ export default function HomePage() {
 
           {/* 일별 파티 유입 그래프 */}
           <div style={{ marginTop: 8, borderTop: '2px solid #EDE9FE', paddingTop: 4 }}>
-            <DailyInflowChart data={data} />
+            <DailyInflowChart data={data} manuals={manuals} />
           </div>
         </>
       )}

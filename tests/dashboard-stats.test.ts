@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { buildExpiredPartyItems, buildPartyMaintenanceTargets, buildServiceStats } from '../src/web/lib/dashboard-stats';
+import { buildDailyInflow, buildExpiredPartyItems, buildPartyMaintenanceTargets, buildServiceStats } from '../src/web/lib/dashboard-stats';
 
 const data = {
   services: [
@@ -99,6 +99,25 @@ describe('dashboard stats', () => {
       accountEmail: 'netflix@example.com',
       memberName: 'C',
       statusName: '거래완료',
+    });
+  });
+
+  test('includes manual party members whose recruitment start date is today in daily inflow', () => {
+    const rows = buildDailyInflow(data, [
+      ...manuals,
+      { id: 'manual-today', serviceType: '웨이브', accountEmail: 'wavve@example.com', memberName: 'manual today', startDate: '2026-04-30', endDate: '2026-07-09', price: 8400, source: 'manual', memo: '', createdAt: '2026-04-30', status: 'active' },
+      { id: 'manual-cancelled-today', serviceType: '웨이브', accountEmail: 'wavve@example.com', memberName: 'cancelled today', startDate: '2026-04-30', endDate: '2026-07-09', price: 8400, source: 'manual', memo: '', createdAt: '2026-04-30', status: 'cancelled' },
+    ] as any, { days: 3, today: '2026-04-30' });
+    const today = rows.find((row) => row.date === '2026-04-30');
+    expect(today?.members.map((member) => member.name)).toContain('manual today');
+    expect(today?.members.map((member) => member.name)).not.toContain('cancelled today');
+    expect(today?.members.find((member) => member.name === 'manual today')).toMatchObject({
+      serviceType: '웨이브',
+      accountEmail: 'wavve@example.com',
+      startDate: '2026-04-30',
+      endDate: '2026-07-09',
+      price: '8,400원',
+      source: 'manual',
     });
   });
 

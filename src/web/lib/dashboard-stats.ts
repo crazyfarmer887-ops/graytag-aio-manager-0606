@@ -83,6 +83,23 @@ export interface ExpiredPartyItem {
   source: 'graytag' | 'manual';
 }
 
+export interface InflowEntry {
+  name: string | null;
+  serviceType: string;
+  accountEmail: string;
+  startDate: string;
+  endDate: string | null;
+  price: string;
+  source: 'graytag' | 'manual';
+}
+
+export interface DailyInflowRow {
+  date: string;
+  label: string;
+  count: number;
+  members: InflowEntry[];
+}
+
 export interface PartyMaintenanceTarget {
   key: string;
   serviceType: string;
@@ -165,6 +182,68 @@ function normalizeDate(value: string | null | undefined): string {
   const iso = value.match(/(\d{4})[-./\s]+(\d{1,2})[-./\s]+(\d{1,2})/);
   if (iso) return `${iso[1]}-${iso[2].padStart(2, '0')}-${iso[3].padStart(2, '0')}`;
   return value;
+}
+
+export function buildDailyInflow(
+  data: DashboardData,
+  manuals: DashboardManualMember[] = [],
+  options: { days?: number; today?: string } = {},
+): DailyInflowRow[] {
+  const days = options.days ?? 30;
+  const today = options.today || new Date().toISOString().slice(0, 10);
+  const baseDate = new Date(`${today}T00:00:00Z`);
+  const countMap: Record<string, number> = {};
+  const memberMap: Record<string, InflowEntry[]> = {};
+
+  const addEntry = (date: string, entry: InflowEntry) => {
+    if (!date) return;
+    countMap[date] = (countMap[date] || 0) + 1;
+    if (!memberMap[date]) memberMap[date] = [];
+    memberMap[date].push(entry);
+  };
+
+  for (const svc of data.services) {
+    for (const acct of svc.accounts) {
+      for (const member of acct.members) {
+        const iso = normalizeDate(member.startDateTime);
+        if (!iso) continue;
+        addEntry(iso, {
+          name: member.name,
+          serviceType: svc.serviceType,
+          accountEmail: acct.email,
+          startDate: iso,
+          endDate: normalizeDate(member.endDateTime) || null,
+          price: member.price,
+          source: 'graytag',
+        });
+      }
+    }
+  }
+
+  for (const member of manuals) {
+    if (member.status === 'cancelled') continue;
+    const iso = normalizeDate(member.startDate);
+    if (!iso) continue;
+    addEntry(iso, {
+      name: member.memberName,
+      serviceType: member.serviceType,
+      accountEmail: member.accountEmail,
+      startDate: iso,
+      endDate: normalizeDate(member.endDate) || null,
+      price: `${member.price.toLocaleString()}원`,
+      source: 'manual',
+    });
+  }
+
+  const result: DailyInflowRow[] = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(baseDate);
+    d.setUTCDate(d.getUTCDate() - i);
+    const iso = d.toISOString().slice(0, 10);
+    const label = `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
+    result.push({ date: iso, label, count: countMap[iso] || 0, members: memberMap[iso] || [] });
+  }
+  return result;
 }
 
 export function buildPartyMaintenanceTargets(
