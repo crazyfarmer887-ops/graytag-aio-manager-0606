@@ -104,6 +104,10 @@ test('OTT home and navigation use the refreshed UI structure', () => {
   assert.match(manage, /전체 메꾸기 미리보기 필요/);
   assert.match(manage, /계정 생성/);
   assert.match(manage, /Email 대시보드 alias/);
+  assert.match(manage, /티빙\+웨이브/);
+  assert.match(manage, /더블이용권/);
+  assert.match(manage, /티빙 연결됨/);
+  assert.match(manage, /웨이브 연결됨/);
   assert.match(manage, /generated-accounts\/create/);
   assert.match(manage, /생성만 완료/);
   assert.match(manage, /결제 완료/);

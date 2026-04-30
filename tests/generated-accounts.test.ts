@@ -59,8 +59,10 @@ describe('generated accounts', () => {
   test('uses short service-number prefixes for generated SimpleLogin aliases', () => {
     expect(serviceAliasStem('웨이브')).toBe('wavve');
     expect(serviceAliasStem('넷플릭스')).toBe('netflix');
+    expect(serviceAliasStem('티빙+웨이브')).toBe('gtwavve');
     expect(nextGeneratedAliasPrefix('웨이브', ['wavve1.foo@example.com', 'wavve3@example.com', 'netflix9@example.com'])).toBe('wavve4');
     expect(nextGeneratedAliasPrefix('티빙', ['tving2.foo@example.com'])).toBe('tving3');
+    expect(nextGeneratedAliasPrefix('티빙+웨이브', ['gtwavve12@example.com'])).toBe('gtwavve13');
   });
 
   test('deletes generated accounts from the sensitive runtime store by id', () => {

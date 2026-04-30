@@ -30,6 +30,15 @@ interface Account {
     pin: string;
     memo: string;
   };
+  doublePassBundle?: {
+    bundleId: string;
+    bundleNo: number;
+    source: 'auto-number' | 'manual-exception' | 'unpaired';
+    hasTving: boolean;
+    hasWavve: boolean;
+    tvingLoginId?: string;
+    wavveAccountId?: string;
+  };
 }
 interface ServiceGroup { serviceType: string; accounts: Account[]; totalUsingMembers: number; totalActiveMembers: number; totalIncome: number; totalRealized: number; }
 interface ManageData {
@@ -52,6 +61,7 @@ const PARTY_MAX: Record<string, number> = {
   '왓챠플레이': 4,
   '티빙': 4,
   '웨이브': 4,
+  '티빙+웨이브': 4,
 };
 const getPartyMax = (svc: string) => PARTY_MAX[svc] || 6;
 
@@ -319,7 +329,7 @@ export default function ManagePage() {
   // ─── 세션 상태 모니터링 ────────────────────────────
   const [sessionStatus, setSessionStatus] = useState<any>(null);
   const [sessionLoading, setSessionLoading] = useState(false);
-  const [accountCreateService, setAccountCreateService] = useState('넷플릭스');
+  const [accountCreateService, setAccountCreateService] = useState('티빙+웨이브');
   const [accountCreateLoading, setAccountCreateLoading] = useState(false);
   const [accountCreateResult, setAccountCreateResult] = useState<string|null>(null);
 
@@ -531,7 +541,7 @@ export default function ManagePage() {
   const svcToCategory = (svcType: string) => {
     const map: Record<string, string> = {
       '웨이브': 'wavve', '디즈니플러스': 'disney', '왓챠플레이': 'WatchaPlay',
-      '넷플릭스': 'Netflix', '티빙': 'tving', '유튜브': 'youtube',
+      '넷플릭스': 'Netflix', '티빙': 'tving', '티빙+웨이브': 'wavve', '유튜브': 'youtube',
       '라프텔': 'laftel', '쿠팡플레이': 'coupang', 'AppleOne': 'AppleOne', '프라임비디오': 'prime',
     };
     return map[svcType] || svcType;
@@ -854,14 +864,14 @@ export default function ManagePage() {
             <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:10, marginBottom:12 }}>
               <div>
                 <div style={{ display:'flex', alignItems:'center', gap:7, fontSize:15, fontWeight:900, color:'#1E1B4B' }}><KeyRound size={16} color="#F97316" /> 계정 생성</div>
-                <div style={{ fontSize:11, color:'#9CA3AF', marginTop:4, lineHeight:1.35 }}>Email 대시보드 alias + 비밀번호 + 6자리 PIN을 새로 만들고, 기존 이메일은 제외해서 생성 계정만 따로 표시해요.</div>
+                <div style={{ fontSize:11, color:'#9CA3AF', marginTop:4, lineHeight:1.35 }}>Email 대시보드 alias + 비밀번호 + 6자리 PIN을 새로 만들고, 티빙+웨이브 더블이용권은 하나의 계정 묶음으로 관리해요.</div>
               </div>
               <span style={{ flexShrink:0, fontSize:10, fontWeight:900, color:'#C2410C', background:'#FFEDD5', borderRadius:999, padding:'4px 9px' }}>생성 전용</span>
             </div>
             <div style={{ display:'grid', gridTemplateColumns:'1fr auto', gap:8 }}>
               <select value={accountCreateService} onChange={e => setAccountCreateService(e.target.value)} disabled={accountCreateLoading}
                 style={{ border:'1.5px solid #FED7AA', borderRadius:12, padding:'10px 12px', fontFamily:'inherit', fontSize:13, fontWeight:800, color:'#1E1B4B', background:'#fff' }}>
-                {CATEGORIES.map(cat => <option key={cat.label} value={cat.label}>{cat.label}</option>)}
+                {[{ label:'티빙+웨이브 더블이용권', value:'티빙+웨이브' }, ...CATEGORIES.filter(cat => cat.label !== '티빙' && cat.label !== '웨이브').map(cat => ({ label: cat.label, value: cat.label }))].map(cat => <option key={cat.value} value={cat.value}>{cat.label}</option>)}
               </select>
               <button onClick={handleCreateGeneratedAccount} disabled={accountCreateLoading}
                 style={{ border:'none', borderRadius:12, padding:'10px 14px', background:accountCreateLoading?'#FDBA74':'#F97316', color:'#fff', fontSize:12, fontWeight:900, cursor:accountCreateLoading?'not-allowed':'pointer', display:'flex', alignItems:'center', gap:6 }}>
@@ -870,7 +880,7 @@ export default function ManagePage() {
               </button>
             </div>
             <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:6, marginTop:10 }}>
-              {['이메일 자동 생성', '비밀번호 자동 생성', 'PIN 자동 생성'].map(label => <div key={label} style={{ background:'rgba(255,255,255,0.72)', borderRadius:10, padding:'7px 6px', fontSize:10, color:'#9A3412', fontWeight:800, textAlign:'center' }}>✓ {label}</div>)}
+              {['이메일 자동 생성', '비밀번호 자동 생성', 'PIN 자동 생성', '더블이용권 묶음 관리'].map(label => <div key={label} style={{ background:'rgba(255,255,255,0.72)', borderRadius:10, padding:'7px 6px', fontSize:10, color:'#9A3412', fontWeight:800, textAlign:'center' }}>✓ {label}</div>)}
             </div>
             {accountCreateResult && <div style={{ marginTop:10, borderRadius:12, padding:'9px 10px', fontSize:12, fontWeight:800, background:accountCreateResult.startsWith('오류')?'#FFF0F0':'#ECFDF5', color:accountCreateResult.startsWith('오류')?'#EF4444':'#059669' }}>{accountCreateResult}</div>}
           </div>
@@ -975,6 +985,12 @@ export default function ManagePage() {
                                   {acct.generatedAccount && <span style={{ fontSize:10, color:acct.generatedAccount.paymentStatus==='paid'?'#059669':'#C2410C', fontWeight:900, display:'flex', alignItems:'center', gap:3, background:acct.generatedAccount.paymentStatus==='paid'?'#ECFDF5':'#FFEDD5', borderRadius:6, padding:'1px 7px' }}>
                                     <KeyRound size={10} /> {acct.generatedAccount.paymentStatus==='paid'?'결제 완료':'생성만 완료'}
                                   </span>}
+                                  {acct.doublePassBundle && <span style={{ fontSize:10, color:'#7C3AED', fontWeight:900, display:'flex', alignItems:'center', gap:3, background:'#EDE9FE', borderRadius:6, padding:'1px 7px' }}>
+                                    더블이용권 #{acct.doublePassBundle.bundleNo}
+                                  </span>}
+                                  {acct.doublePassBundle?.hasTving && <span style={{ fontSize:10, color:'#2563EB', fontWeight:800, background:'#EFF6FF', borderRadius:6, padding:'1px 7px' }}>티빙 연결됨</span>}
+                                  {acct.doublePassBundle?.hasWavve && <span style={{ fontSize:10, color:'#059669', fontWeight:800, background:'#ECFDF5', borderRadius:6, padding:'1px 7px' }}>웨이브 연결됨</span>}
+                                  {acct.doublePassBundle?.source === 'manual-exception' && <span style={{ fontSize:10, color:'#C2410C', fontWeight:800, background:'#FFEDD5', borderRadius:6, padding:'1px 7px' }}>예외 매칭</span>}
                                   {vi.vacancy === 0 && <span style={{ fontSize:10, color:'#059669', fontWeight:600, display:'flex', alignItems:'center', gap:3 }}><TrendingUp size={10} /> 만석</span>}
                                   {vi.vacancy > 0 && vi.unfilled > 0 && (
                                     <span style={{ fontSize:10, color:'#EF4444', fontWeight:700, display:'flex', alignItems:'center', gap:3, background:'#FFF0F0', borderRadius:6, padding:'1px 7px' }}>

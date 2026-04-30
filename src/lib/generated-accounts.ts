@@ -61,6 +61,7 @@ const SERVICE_ALIAS_STEMS: Record<string, string> = {
   '유튜브': 'youtube',
   '왓챠플레이': 'watcha',
   '웨이브': 'wavve',
+  '티빙+웨이브': 'gtwavve',
   '라프텔': 'laftel',
   '티빙': 'tving',
   '쿠팡플레이': 'coupang',
