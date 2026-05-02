@@ -77,6 +77,39 @@ export function serviceAliasStem(serviceType: string): string {
   return normalized || 'ott';
 }
 
+export interface GeneratedAccountCreationCopy {
+  serviceLabel: string;
+  description: string;
+  prefixLabel: string;
+  prefixPlaceholder: string;
+  prefixHelp: string;
+  featureLabels: string[];
+}
+
+export function getGeneratedAccountCreationCopy(serviceType: string): GeneratedAccountCreationCopy {
+  const normalized = String(serviceType || '').trim();
+  if (normalized === '티빙+웨이브') {
+    return {
+      serviceLabel: '티빙+웨이브 더블 플랜',
+      description: '웨이브 19,500원 더블 플랜 결제 후 티빙을 바인딩하는 계정 묶음이에요. 티빙은 이메일 로그인이 안 되므로 gtwavveN ID를 기준으로 맞춰요.',
+      prefixLabel: '더블플랜 번호 / 티빙 로그인 ID',
+      prefixPlaceholder: '예: gtwavve7, gtwavve44',
+      prefixHelp: '티빙 로그인 ID는 gtwavveN으로 만들고, 웨이브 로그인은 같은 prefix의 Email alias로 생성해요. 비워두면 기존 gtwavve 번호 다음 번호를 자동 생성합니다.',
+      featureLabels: ['웨이브 Email alias 생성', '티빙 ID gtwavveN 기준', '비밀번호·PIN 자동 생성', '더블이용권 묶음 관리'],
+    };
+  }
+
+  const label = normalized || 'OTT';
+  return {
+    serviceLabel: label,
+    description: 'Email 대시보드 alias + 비밀번호 + 6자리 PIN을 새로 만들고, 판매 게시물 없이도 계정 관리에 바로 유지해요.',
+    prefixLabel: 'alias prefix 직접 설정',
+    prefixPlaceholder: '예: wavve7, netflix12',
+    prefixHelp: '비워두면 서비스별 다음 번호를 자동 생성해요. 입력하면 해당 prefix로 SimpleLogin alias를 만들고 계정 관리에 바로 표시됩니다.',
+    featureLabels: ['이메일 자동 생성', '비밀번호 자동 생성', 'PIN 자동 생성', '계정 관리 표시'],
+  };
+}
+
 export function normalizeManualAliasPrefix(value: string): string {
   const raw = String(value || '').trim().toLowerCase();
   if (!raw) return '';

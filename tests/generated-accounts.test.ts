@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { buildGeneratedAccount, deleteGeneratedAccountFromStore, extractSimpleLoginAliasRef, generateAccountPassword, generatedAccountKey, mergeGeneratedAccountsIntoManagement, nextGeneratedAliasPrefix, normalizeGeneratedAccountPatch, normalizeManualAliasPrefix, serviceAliasStem } from '../src/lib/generated-accounts';
+import { buildGeneratedAccount, deleteGeneratedAccountFromStore, extractSimpleLoginAliasRef, generateAccountPassword, generatedAccountKey, getGeneratedAccountCreationCopy, mergeGeneratedAccountsIntoManagement, nextGeneratedAliasPrefix, normalizeGeneratedAccountPatch, normalizeManualAliasPrefix, serviceAliasStem } from '../src/lib/generated-accounts';
 
 describe('generated accounts', () => {
   test('generates a 10 character password with lowercase start, digit, and symbol', () => {
@@ -63,6 +63,24 @@ describe('generated accounts', () => {
     expect(nextGeneratedAliasPrefix('웨이브', ['wavve1.foo@example.com', 'wavve3@example.com', 'netflix9@example.com'])).toBe('wavve4');
     expect(nextGeneratedAliasPrefix('티빙', ['tving2.foo@example.com'])).toBe('tving3');
     expect(nextGeneratedAliasPrefix('티빙+웨이브', ['gtwavve12@example.com'])).toBe('gtwavve13');
+  });
+
+  test('explains 티빙+웨이브 generated account prefixes as TVING login IDs bound to Wavve email aliases', () => {
+    const copy = getGeneratedAccountCreationCopy('티빙+웨이브');
+    expect(copy.serviceLabel).toBe('티빙+웨이브 더블 플랜');
+    expect(copy.prefixLabel).toBe('더블플랜 번호 / 티빙 로그인 ID');
+    expect(copy.prefixPlaceholder).toBe('예: gtwavve7, gtwavve44');
+    expect(copy.prefixHelp).toContain('티빙 로그인 ID는 gtwavveN');
+    expect(copy.prefixHelp).toContain('웨이브 로그인은 같은 prefix의 Email alias');
+    expect(copy.description).toContain('웨이브 19,500원 더블 플랜');
+  });
+
+  test('keeps normal generated account prefix copy focused on SimpleLogin alias prefixes', () => {
+    const copy = getGeneratedAccountCreationCopy('넷플릭스');
+    expect(copy.serviceLabel).toBe('넷플릭스');
+    expect(copy.prefixLabel).toBe('alias prefix 직접 설정');
+    expect(copy.prefixPlaceholder).toContain('netflix12');
+    expect(copy.prefixHelp).toContain('SimpleLogin alias');
   });
 
   test('normalizes a manually entered alias prefix and rejects unsafe values', () => {

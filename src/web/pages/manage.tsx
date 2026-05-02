@@ -6,6 +6,7 @@ import { assertAutoDeliveryInput, buildAutoFillDeliveryMemo, buildFillProductMod
 import { generateProfileNickname, generateUniqueProfileNicknames, isValidProfileNickname, normalizeProfileNickname } from "../../lib/profile-nickname";
 import { buildProfileAuditRows, summarizeProfileAudit, type ProfileAuditRow, type ProfileAuditStore } from "../../lib/profile-audit";
 import type { PartyMaintenanceChecklistStore } from "../../lib/party-maintenance-checklist";
+import { getGeneratedAccountCreationCopy } from "../../lib/generated-accounts";
 import { RefreshCw, KeyRound, Mail, ChevronDown, ChevronRight, TrendingUp, Loader2, AlertCircle, ExternalLink, Calendar, UserX, Megaphone, PlusCircle, X, UserPlus, Trash2, Activity, Wifi, WifiOff } from "lucide-react";
 
 interface OnSaleProduct {
@@ -376,7 +377,8 @@ export default function ManagePage() {
   const [accountCreateService, setAccountCreateService] = useState('티빙+웨이브');
   const [accountCreatePrefix, setAccountCreatePrefix] = useState('');
   const [accountCreateLoading, setAccountCreateLoading] = useState(false);
-  const [accountCreateResult, setAccountCreateResult] = useState<string|null>(null);
+  const [accountCreateResult, setAccountCreateResult] = useState<string | null>(null);
+  const accountCreateCopy = getGeneratedAccountCreationCopy(accountCreateService);
   const [emailAliases, setEmailAliases] = useState<EmailAlias[]>([]);
   const [maintenanceChecklistStore, setMaintenanceChecklistStore] = useState<PartyMaintenanceChecklistStore>({});
 
@@ -957,14 +959,14 @@ export default function ManagePage() {
             <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:10, marginBottom:12 }}>
               <div>
                 <div style={{ display:'flex', alignItems:'center', gap:7, fontSize:15, fontWeight:900, color:'#1E1B4B' }}><KeyRound size={16} color="#F97316" /> 계정 생성</div>
-                <div style={{ fontSize:11, color:'#9CA3AF', marginTop:4, lineHeight:1.35 }}>Email 대시보드 alias + 비밀번호 + 6자리 PIN을 새로 만들고, 티빙+웨이브 더블이용권은 하나의 계정 묶음으로 관리해요.</div>
+                <div style={{ fontSize:11, color:'#9CA3AF', marginTop:4, lineHeight:1.35 }}>{accountCreateCopy.description}</div>
               </div>
               <span style={{ flexShrink:0, fontSize:10, fontWeight:900, color:'#C2410C', background:'#FFEDD5', borderRadius:999, padding:'4px 9px' }}>생성 전용</span>
             </div>
             <div style={{ display:'grid', gridTemplateColumns:'1fr auto', gap:8 }}>
               <select value={accountCreateService} onChange={e => setAccountCreateService(e.target.value)} disabled={accountCreateLoading}
                 style={{ border:'1.5px solid #FED7AA', borderRadius:12, padding:'10px 12px', fontFamily:'inherit', fontSize:13, fontWeight:800, color:'#1E1B4B', background:'#fff' }}>
-                {[{ label:'티빙+웨이브 더블이용권', value:'티빙+웨이브' }, ...CATEGORIES.filter(cat => cat.label !== '티빙' && cat.label !== '웨이브').map(cat => ({ label: cat.label, value: cat.label }))].map(cat => <option key={cat.value} value={cat.value}>{cat.label}</option>)}
+                {[{ label:accountCreateCopy.serviceLabel, value:'티빙+웨이브' }, ...CATEGORIES.filter(cat => cat.label !== '티빙' && cat.label !== '웨이브').map(cat => ({ label: cat.label, value: cat.label }))].map(cat => <option key={cat.value} value={cat.value}>{cat.label}</option>)}
               </select>
               <button onClick={handleCreateGeneratedAccount} disabled={accountCreateLoading}
                 style={{ border:'none', borderRadius:12, padding:'10px 14px', background:accountCreateLoading?'#FDBA74':'#F97316', color:'#fff', fontSize:12, fontWeight:900, cursor:accountCreateLoading?'not-allowed':'pointer', display:'flex', alignItems:'center', gap:6 }}>
@@ -973,14 +975,14 @@ export default function ManagePage() {
               </button>
             </div>
             <div style={{ marginTop:8 }}>
-              <label style={{ display:'block', fontSize:10, fontWeight:900, color:'#C2410C', marginBottom:4 }}>alias prefix 직접 설정</label>
+              <label style={{ display:'block', fontSize:10, fontWeight:900, color:'#C2410C', marginBottom:4 }}>{accountCreateCopy.prefixLabel}</label>
               <input value={accountCreatePrefix} onChange={e => setAccountCreatePrefix(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))} disabled={accountCreateLoading}
-                placeholder="예: wavve7, gtwavve44, netflix12"
+                placeholder={accountCreateCopy.prefixPlaceholder}
                 style={{ width:'100%', boxSizing:'border-box', border:'1.5px solid #FED7AA', borderRadius:12, padding:'10px 12px', fontFamily:'inherit', fontSize:13, fontWeight:800, color:'#1E1B4B', background:'#fff' }} />
-              <div style={{ fontSize:10, color:'#9CA3AF', marginTop:4 }}>비워두면 서비스별 다음 번호를 자동 생성해요. 입력하면 해당 prefix로 SimpleLogin alias를 만들고 계정 관리에 바로 표시됩니다.</div>
+              <div style={{ fontSize:10, color:'#9CA3AF', marginTop:4 }}>{accountCreateCopy.prefixHelp}</div>
             </div>
-            <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:6, marginTop:10 }}>
-              {['이메일 자동 생성', '비밀번호 자동 생성', 'PIN 자동 생성', '더블이용권 묶음 관리'].map(label => <div key={label} style={{ background:'rgba(255,255,255,0.72)', borderRadius:10, padding:'7px 6px', fontSize:10, color:'#9A3412', fontWeight:800, textAlign:'center' }}>✓ {label}</div>)}
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:6, marginTop:10 }}>
+              {accountCreateCopy.featureLabels.map(label => <div key={label} style={{ background:'rgba(255,255,255,0.72)', borderRadius:10, padding:'7px 6px', fontSize:10, color:'#9A3412', fontWeight:800, textAlign:'center' }}>✓ {label}</div>)}
             </div>
             {accountCreateResult && <div style={{ marginTop:10, borderRadius:12, padding:'9px 10px', fontSize:12, fontWeight:800, background:accountCreateResult.startsWith('오류')?'#FFF0F0':'#ECFDF5', color:accountCreateResult.startsWith('오류')?'#EF4444':'#059669' }}>{accountCreateResult}</div>}
           </div>
