@@ -185,7 +185,7 @@ describe('dashboard stats', () => {
     });
   });
 
-  test('counts paid generated double-pass accounts in dashboard stats and subscription costs', () => {
+  test('excludes paid generated double-pass accounts from trading/profit calculations', () => {
     const partyData = {
       services: [{
         serviceType: '티빙+웨이브',
@@ -205,11 +205,11 @@ describe('dashboard stats', () => {
     } as any;
 
     const stats = buildServiceStats(partyData);
-    expect(stats[0]).toMatchObject({ serviceType: '티빙+웨이브', accountCount: 1, usingMembers: 0, maxSlots: 4 });
+    expect(stats).toEqual([]);
 
     const summary = buildMonthlyNetProfitSummary(partyData);
-    expect(summary.subscriptionCost).toBe(19500);
-    expect(summary.netProfit).toBe(-19500);
+    expect(summary.subscriptionCost).toBe(0);
+    expect(summary.netProfit).toBe(0);
   });
 
   test('builds expired party items and excludes cancelled deals from the expired party component', () => {

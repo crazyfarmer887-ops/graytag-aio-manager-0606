@@ -172,7 +172,7 @@ export const OTT_MONTHLY_SUBSCRIPTION_COST: Record<string, number> = {
   '티빙+웨이브': 19500,
 };
 
-const EXCLUDED_SERVICES = new Set(['왓챠', '애플원', '유튜브', '왓챠플레이']);
+const EXCLUDED_SERVICES = new Set(['왓챠', '애플원', '유튜브', '왓챠플레이', '티빙+웨이브']);
 const CANCELLED_STATUSES = new Set([
   'CancelByInspectionRejection',
   'CancelByDepositRejection',
@@ -216,13 +216,9 @@ function isActualPartyMember(member: Pick<DashboardMember, 'status' | 'statusNam
   return ACTUAL_PARTY_STATUSES.has(member.status) || isAccountCheckingMember(member);
 }
 
-function isPaidGeneratedAccount(account: DashboardAccount): boolean {
-  return account.generatedAccount?.paymentStatus === 'paid';
-}
-
 function shouldCountAccount(account: DashboardAccount, manuals: DashboardManualMember[] = []): boolean {
   if (account.email === '(직접전달)') return false;
-  return account.usingCount > 0 || manualCountForAccount(manuals, account.serviceType, account.email) > 0 || isPaidGeneratedAccount(account);
+  return account.usingCount > 0 || manualCountForAccount(manuals, account.serviceType, account.email) > 0;
 }
 
 export function buildServiceStats(data: DashboardData, manuals: DashboardManualMember[] = []): ServiceStat[] {

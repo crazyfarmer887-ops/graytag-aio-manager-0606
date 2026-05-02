@@ -31,6 +31,10 @@ interface Account {
     emailId: number | string;
     pin: string;
     memo: string;
+    sourceServiceType?: string;
+    linkedServiceType?: string;
+    tvingLoginId?: string;
+    wavveEmail?: string;
   };
 }
 interface ServiceGroup { serviceType: string; accounts: Account[]; totalUsingMembers: number; totalActiveMembers: number; totalIncome: number; totalRealized: number; }
@@ -471,6 +475,7 @@ export default function ManagePage() {
         method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ paymentStatus: paid ? 'paid' : 'pending' }),
       });
       if (!res.ok) throw new Error('결제 체크 저장 실패');
+      await doFetch();
     } catch (e: any) {
       setAccountCreateResult(`오류: ${e.message}`);
       setData(prev => prev ? {

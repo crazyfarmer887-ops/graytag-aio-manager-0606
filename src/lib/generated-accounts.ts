@@ -1,5 +1,9 @@
 export type GeneratedAccountPaymentStatus = 'pending' | 'paid';
 
+const DOUBLE_PASS_SERVICE = '티빙+웨이브';
+const DOUBLE_PASS_TVING_SERVICE = '티빙';
+const DOUBLE_PASS_WAVVE_SERVICE = '웨이브';
+
 export interface GeneratedAccount {
   id: string;
   serviceType: string;
@@ -207,14 +211,21 @@ export function buildGeneratedAccount(input: {
   };
 }
 
-export function generatedAccountToManagementAccount(account: GeneratedAccount) {
+export function generatedAccountToManagementAccount(account: GeneratedAccount, override?: {
+  serviceType?: string;
+  email?: string;
+  linkedServiceType?: string;
+  tvingLoginId?: string;
+  wavveEmail?: string;
+}) {
+  const serviceType = override?.serviceType || account.serviceType;
   return {
-    email: account.email,
-    serviceType: account.serviceType,
+    email: override?.email || account.email,
+    serviceType,
     members: [],
     usingCount: 0,
     activeCount: 0,
-    totalSlots: getGeneratedAccountPartyMax(account.serviceType),
+    totalSlots: getGeneratedAccountPartyMax(serviceType),
     totalIncome: 0,
     totalRealizedIncome: 0,
     expiryDate: null,
@@ -227,8 +238,31 @@ export function generatedAccountToManagementAccount(account: GeneratedAccount) {
       emailId: account.emailId,
       pin: account.pin,
       memo: account.memo,
+      sourceServiceType: account.serviceType,
+      linkedServiceType: override?.linkedServiceType || serviceType,
+      tvingLoginId: override?.tvingLoginId,
+      wavveEmail: override?.wavveEmail,
     },
   };
+}
+
+function isPaidDoublePassGeneratedAccount(account: GeneratedAccount): boolean {
+  return account.serviceType === DOUBLE_PASS_SERVICE && account.paymentStatus === 'paid';
+}
+
+function tvingLoginIdFromWavveEmail(email: string): string {
+  const local = normalizeGeneratedAccountEmail(email).split('@')[0] || '';
+  return (local.split('.')[0] || local).trim();
+}
+
+function generatedManagementRows(account: GeneratedAccount) {
+  if (!isPaidDoublePassGeneratedAccount(account)) return [generatedAccountToManagementAccount(account)];
+  const wavveEmail = account.email;
+  const tvingLoginId = tvingLoginIdFromWavveEmail(account.email);
+  return [
+    generatedAccountToManagementAccount(account, { serviceType: DOUBLE_PASS_TVING_SERVICE, email: tvingLoginId, linkedServiceType: DOUBLE_PASS_TVING_SERVICE, tvingLoginId, wavveEmail }),
+    generatedAccountToManagementAccount(account, { serviceType: DOUBLE_PASS_WAVVE_SERVICE, email: wavveEmail, linkedServiceType: DOUBLE_PASS_WAVVE_SERVICE, tvingLoginId, wavveEmail }),
+  ];
 }
 
 export function mergeGeneratedAccountsIntoManagement<T extends {
@@ -250,16 +284,21 @@ export function mergeGeneratedAccountsIntoManagement<T extends {
   let added = 0;
   const generated = Object.values(store).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   for (const account of generated) {
-    const key = generatedAccountKey(account.serviceType, account.email);
-    if (existing.has(key)) continue;
-    let service = next.services.find(s => s.serviceType === account.serviceType);
-    if (!service) {
-      service = { serviceType: account.serviceType, accounts: [], totalUsingMembers: 0, totalActiveMembers: 0, totalIncome: 0, totalRealized: 0 };
-      next.services.push(service);
+    const rows = generatedManagementRows(account);
+    let accountAdded = 0;
+    for (const row of rows) {
+      const key = generatedAccountKey(row.serviceType, row.email);
+      if (existing.has(key)) continue;
+      let service = next.services.find(s => s.serviceType === row.serviceType);
+      if (!service) {
+        service = { serviceType: row.serviceType, accounts: [], totalUsingMembers: 0, totalActiveMembers: 0, totalIncome: 0, totalRealized: 0 };
+        next.services.push(service);
+      }
+      service.accounts.unshift(row);
+      existing.add(key);
+      accountAdded += 1;
     }
-    service.accounts.unshift(generatedAccountToManagementAccount(account));
-    existing.add(key);
-    added += 1;
+    added += accountAdded;
   }
 
   next.summary.totalAccounts = Number(next.summary.totalAccounts || 0) + added;

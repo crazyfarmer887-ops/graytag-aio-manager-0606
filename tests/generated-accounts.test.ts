@@ -47,6 +47,24 @@ describe('generated accounts', () => {
     expect(result.summary.totalAccounts).toBe(3);
   });
 
+  test('splits paid 티빙+웨이브 generated accounts into 티빙 and 웨이브 management rows', () => {
+    const doublePass = {
+      ...buildGeneratedAccount({ serviceType: '티빙+웨이브', alias: { id: 103, email: 'gtwavve8.fastball266@aleeas.com' }, password: 'a12345678!', pin: '123456', memo: 'memo', now: '2026-04-29T12:02:00.000Z' }),
+      paymentStatus: 'paid' as const,
+      paidAt: '2026-04-29T12:10:00.000Z',
+    };
+    const result = mergeGeneratedAccountsIntoManagement({ services: [], summary: { totalAccounts: 0 } }, { [doublePass.id]: doublePass });
+
+    expect(result.services.find(s => s.serviceType === '티빙+웨이브')).toBeUndefined();
+    const tving = result.services.find(s => s.serviceType === '티빙')?.accounts[0];
+    const wavve = result.services.find(s => s.serviceType === '웨이브')?.accounts[0];
+    expect(tving).toMatchObject({ serviceType: '티빙', email: 'gtwavve8', totalSlots: 4, keepPasswd: 'a12345678!' });
+    expect(wavve).toMatchObject({ serviceType: '웨이브', email: 'gtwavve8.fastball266@aleeas.com', totalSlots: 4, keepPasswd: 'a12345678!' });
+    expect(tving?.generatedAccount).toMatchObject({ id: doublePass.id, sourceServiceType: '티빙+웨이브', linkedServiceType: '티빙', wavveEmail: 'gtwavve8.fastball266@aleeas.com', tvingLoginId: 'gtwavve8' });
+    expect(wavve?.generatedAccount).toMatchObject({ id: doublePass.id, sourceServiceType: '티빙+웨이브', linkedServiceType: '웨이브', wavveEmail: 'gtwavve8.fastball266@aleeas.com', tvingLoginId: 'gtwavve8' });
+    expect(result.summary.totalAccounts).toBe(2);
+  });
+
   test('normalizes paid/pending payment checkbox patches', () => {
     expect(normalizeGeneratedAccountPatch({ paymentStatus: 'paid', paidAt: '2026-04-29T12:00:00.000Z' })).toEqual({ paymentStatus: 'paid', paidAt: '2026-04-29T12:00:00.000Z' });
     expect(normalizeGeneratedAccountPatch({ paymentStatus: 'pending' })).toEqual({ paymentStatus: 'pending', paidAt: null });
