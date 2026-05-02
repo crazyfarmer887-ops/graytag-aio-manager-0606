@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { buildGeneratedAccount, deleteGeneratedAccountFromStore, extractSimpleLoginAliasRef, generateAccountPassword, generatedAccountKey, mergeGeneratedAccountsIntoManagement, nextGeneratedAliasPrefix, normalizeGeneratedAccountPatch, serviceAliasStem } from '../src/lib/generated-accounts';
+import { buildGeneratedAccount, deleteGeneratedAccountFromStore, extractSimpleLoginAliasRef, generateAccountPassword, generatedAccountKey, mergeGeneratedAccountsIntoManagement, nextGeneratedAliasPrefix, normalizeGeneratedAccountPatch, normalizeManualAliasPrefix, serviceAliasStem } from '../src/lib/generated-accounts';
 
 describe('generated accounts', () => {
   test('generates a 10 character password with lowercase start, digit, and symbol', () => {
@@ -63,6 +63,18 @@ describe('generated accounts', () => {
     expect(nextGeneratedAliasPrefix('웨이브', ['wavve1.foo@example.com', 'wavve3@example.com', 'netflix9@example.com'])).toBe('wavve4');
     expect(nextGeneratedAliasPrefix('티빙', ['tving2.foo@example.com'])).toBe('tving3');
     expect(nextGeneratedAliasPrefix('티빙+웨이브', ['gtwavve12@example.com'])).toBe('gtwavve13');
+  });
+
+  test('normalizes a manually entered alias prefix and rejects unsafe values', () => {
+    expect(normalizeManualAliasPrefix(' Wavve-07 ')).toBe('wavve07');
+    expect(normalizeManualAliasPrefix('gtwavve44')).toBe('gtwavve44');
+    expect(() => normalizeManualAliasPrefix('웨이브7')).toThrow(/영문/);
+    expect(() => normalizeManualAliasPrefix('ab')).toThrow(/3자 이상/);
+    expect(() => normalizeManualAliasPrefix('already@example.com')).toThrow(/@/);
+  });
+
+  test('uses manual prefix exactly when provided instead of auto-numbering', () => {
+    expect(nextGeneratedAliasPrefix('웨이브', ['wavve1@example.com'], 'Custom77')).toBe('custom77');
   });
 
   test('deletes generated accounts from the sensitive runtime store by id', () => {

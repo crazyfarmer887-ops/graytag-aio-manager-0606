@@ -14,7 +14,7 @@ import { StatusBadge } from "../components/ui/status-badge";
 interface Member {
   dealUsid: string; name: string | null; status: string; statusName: string;
   price: string; purePrice: number; realizedSum: number; progressRatio: string;
-  startDateTime: string | null; endDateTime: string | null; remainderDays: number;
+  startDateTime: string | null; inflowDateTime?: string | null; endDateTime: string | null; remainderDays: number;
   source: 'after' | 'before';
 }
 interface Account {
@@ -71,6 +71,18 @@ interface SafeModeState {
   updatedBy: string;
 }
 
+interface OperationsCenterState {
+  center?: {
+    summary: { actionRequired: number; profileIssues: number; replyQueueOpen: number; autoReplyNeedsReview: number; kakaoOpen: number };
+    manualQueue: { open: number; todo: number; inProgress: number; done: number; kakaoOpen: number; highPriorityOpen: number };
+    recommendedActions: { id: string; label: string; count: number; tone: string }[];
+  };
+  manualQueueItems?: {
+    id: string; source: string; buyerName: string; serviceType: string; accountEmail: string; message: string; status: string; priority: string; memo?: string;
+  }[];
+  updatedAt?: string;
+}
+
 // ─── 쿠키 ──────────────────────────────────────────────────────
 const AUTO_COOKIE_ID = '__session_keeper__';
 const AUTO_COOKIE = { id: AUTO_COOKIE_ID, label: '자동', AWSALB: '', AWSALBCORS: '', JSESSIONID: '__auto__' };
@@ -125,6 +137,7 @@ function DailyInflowChart({ data, manuals }: { data: ManageData; manuals: Manual
   const maxCount = Math.max(...rows.map(r => r.count), 1);
   const totalInflow = rows.reduce((s, r) => s + r.count, 0);
   const todayCount = rows[rows.length - 1]?.count ?? 0;
+  const serviceKeys = Array.from(new Set(rows.flatMap(row => Object.keys(row.byService))));
 
   // 7일 이동평균
   const avg7 = rows.map((_, i) => {
@@ -176,10 +189,11 @@ function DailyInflowChart({ data, manuals }: { data: ManageData; manuals: Manual
             const barH = row.count > 0 ? Math.max(4, Math.round((row.count / maxCount) * BAR_H)) : 0;
             const isToday = i === rows.length - 1;
             const isWeekend = new Date(row.date).getDay() === 0 || new Date(row.date).getDay() === 6;
-            const barColor = isToday ? '#7C3AED' : row.count >= maxCount ? '#059669' : row.count > 0 ? '#A78BFA' : '#E5E7EB';
+            const fallbackBarColor = isToday ? '#7C3AED' : row.count >= maxCount ? '#059669' : row.count > 0 ? '#A78BFA' : '#E5E7EB';
+            const segments = Object.entries(row.byService).filter(([, count]) => count > 0);
 
             return (
-              <div key={row.date} onClick={() => row.count > 0 && setSelectedDate(row.date === selectedDate ? null : row.date)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: BAR_W, flexShrink: 0, cursor: row.count > 0 ? 'pointer' : 'default' }}>
+              <div key={row.date} title={segments.map(([svc, count]) => `${svc} ${count}명`).join(' · ')} onClick={() => row.count > 0 && setSelectedDate(row.date === selectedDate ? null : row.date)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: BAR_W, flexShrink: 0, cursor: row.count > 0 ? 'pointer' : 'default' }}>
                 {/* 숫자 */}
                 {row.count > 0 && (
                   <div style={{ fontSize: 9, fontWeight: 700, color: isToday ? '#7C3AED' : '#6B7280', marginBottom: 2, lineHeight: 1 }}>
@@ -188,8 +202,12 @@ function DailyInflowChart({ data, manuals }: { data: ManageData; manuals: Manual
                 )}
                 {/* 빈 공간 (숫자 없는 경우 정렬용) */}
                 {row.count === 0 && <div style={{ height: 13 }} />}
-                {/* 막대 */}
-                <div style={{ width: '100%', height: barH || 3, background: barColor, borderRadius: '3px 3px 0 0', transition: 'height 0.3s ease', minHeight: 3 }} />
+                {/* 서비스별 누적 막대 */}
+                <div style={{ width: '100%', height: barH || 3, borderRadius: '3px 3px 0 0', overflow: 'hidden', background: row.count > 0 ? '#EDE9FE' : fallbackBarColor, display: 'flex', flexDirection: 'column-reverse', transition: 'height 0.3s ease', minHeight: 3 }}>
+                  {segments.length > 0 ? segments.map(([svc, count]) => (
+                    <div key={svc} style={{ width: '100%', height: `${Math.max(8, (count / row.count) * 100)}%`, background: SVC_COLORS[svc] || '#9CA3AF' }} />
+                  )) : null}
+                </div>
                 {/* x축 구분선 */}
                 <div style={{ width: '100%', height: 1, background: '#E5E7EB' }} />
                 {/* 날짜 라벨 */}
@@ -205,16 +223,12 @@ function DailyInflowChart({ data, manuals }: { data: ManageData; manuals: Manual
 
         {/* 범례 */}
         <div style={{ display: 'flex', gap: 12, marginTop: 8, paddingTop: 8, borderTop: '1px solid #F3F4F6' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: '#9CA3AF' }}>
-            <div style={{ width: 8, height: 8, background: '#7C3AED', borderRadius: 2 }} />오늘
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: '#9CA3AF' }}>
-            <div style={{ width: 8, height: 8, background: '#059669', borderRadius: 2 }} />최다 유입
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: '#9CA3AF' }}>
-            <div style={{ width: 8, height: 8, background: '#A78BFA', borderRadius: 2 }} />일반
-          </div>
-          <div style={{ marginLeft: 'auto', fontSize: 10, color: '#9CA3AF' }}>막대 클릭 → 상세</div>
+          {serviceKeys.slice(0, 8).map(svc => (
+            <div key={svc} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: '#9CA3AF' }}>
+              <div style={{ width: 8, height: 8, background: SVC_COLORS[svc] || '#9CA3AF', borderRadius: 2 }} />{svc}
+            </div>
+          ))}
+          <div style={{ marginLeft: 'auto', fontSize: 10, color: '#9CA3AF' }}>서비스별 누적 막대 · 클릭 → 상세</div>
         </div>
       </div>
 
@@ -238,6 +252,7 @@ function DailyInflowChart({ data, manuals }: { data: ManageData; manuals: Manual
                     <span style={{ fontSize: 12, fontWeight: 700, color: '#1E1B4B' }}>{m.name || '(이름없음)'}</span>
                     <span style={{ fontSize: 10, color: '#7C3AED', marginLeft: 6, fontWeight: 600 }}>{m.serviceType}</span>
                     {m.source === 'manual' && <span style={{ fontSize: 9, color: '#059669', marginLeft: 5, fontWeight: 800, background: '#ECFDF5', borderRadius: 999, padding: '1px 5px' }}>수동</span>}
+                    {(m.status === 'DeliveredAndCheckPrepaid' || m.statusName?.includes('계정확인중') || m.statusName?.includes('계정 확인중')) && <span style={{ fontSize: 9, color: '#2563EB', marginLeft: 5, fontWeight: 900, background: '#EFF6FF', borderRadius: 999, padding: '1px 5px' }}>계정 확인중</span>}
                   </div>
                   <div style={{ fontSize: 10, color: '#6B7280', whiteSpace: 'nowrap' }}>
                     {m.startDate}{m.endDate ? ` ~ ${m.endDate}` : ''}
@@ -597,7 +612,7 @@ function PartyMaintenancePanel({ items, regeneratingPinKey, onUpdate, onRegenera
   );
 }
 
-function ChatAlertsPanel({ alerts, unreadCount, loading, updatedAt, fromCache, rateLimited, hydrationFailedCount, error, onOpenChat }: { alerts: ChatAlertItem[]; unreadCount: number; loading: boolean; updatedAt: string | null; fromCache: boolean; rateLimited: boolean; hydrationFailedCount: number; error: string | null; onOpenChat: () => void }) {
+function ChatAlertsPanel({ alerts, unreadCount, loading, updatedAt, fromCache, rateLimited, hydrationFailedCount, error, onOpenChat, onOpenChatRoom }: { alerts: ChatAlertItem[]; unreadCount: number; loading: boolean; updatedAt: string | null; fromCache: boolean; rateLimited: boolean; hydrationFailedCount: number; error: string | null; onOpenChat: () => void; onOpenChatRoom: (chatRoomUuid: string) => void }) {
   const displayAlerts = alerts;
   return (
     <Card tone={unreadCount > 0 ? 'warning' : 'info'} style={{ marginBottom: 16 }}>
@@ -638,10 +653,65 @@ function ChatAlertsPanel({ alerts, unreadCount, loading, updatedAt, fromCache, r
               </div>
               <div style={{ fontSize:10, color:'#9CA3AF', marginTop:4, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>계정 {alert.accountLabel} · 메시지 도착 {alert.timeLabel}</div>
               <div style={{ fontSize:12, color:alert.missingMessage?'#B45309':'#6B21A8', marginTop:6, lineHeight:1.4, wordBreak:'break-word' }}>“{alert.message}”</div>
+              <button onClick={() => onOpenChatRoom(alert.chatRoomUuid)} style={{ marginTop:7, border:'none', borderRadius:8, padding:'5px 8px', background:'#EFF6FF', color:'#2563EB', fontSize:10, fontWeight:900, cursor:'pointer', display:'inline-flex', alignItems:'center', gap:4 }}>
+                <MessageCircle size={11} /> 채팅방 바로가기
+              </button>
             </div>
           ))}
         </div>
       )}
+    </Card>
+  );
+}
+
+function OperationsCenterPanel({ state, loading, onOpenChat, onOpenManage, onRefresh }: { state: OperationsCenterState | null; loading: boolean; onOpenChat: () => void; onOpenManage: () => void; onRefresh: () => void }) {
+  const center = state?.center;
+  const summary = center?.summary;
+  const queueItems = (state?.manualQueueItems || []).filter(item => item.status !== 'done').slice(0, 3);
+  const toneColor = summary && summary.actionRequired > 0 ? '#D97706' : '#059669';
+  return (
+    <Card tone={summary && summary.actionRequired > 0 ? 'warning' : 'success'} style={{ marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 900, color: 'var(--foreground)' }}>운영센터</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>프로필 정리 · 수동 고객 · 카카오톡 응대 큐</div>
+        </div>
+        <button onClick={onRefresh} disabled={loading} style={{ border: 'none', borderRadius: 999, background: '#F3F0FF', color: '#7C3AED', padding: '7px 10px', fontSize: 11, fontWeight: 900, cursor: loading ? 'not-allowed' : 'pointer' }}>
+          {loading ? '조회중' : '새로고침'}
+        </button>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 7, marginBottom: 10 }}>
+        {[
+          ['조치', summary?.actionRequired ?? 0, toneColor],
+          ['프로필', summary?.profileIssues ?? 0, '#EF4444'],
+          ['응대', summary?.replyQueueOpen ?? 0, '#7C3AED'],
+          ['카카오톡', summary?.kakaoOpen ?? 0, '#2563EB'],
+        ].map(([label, value, color]) => (
+          <div key={String(label)} style={{ background: '#FAFAFF', border: '1px solid #EEF2FF', borderRadius: 12, padding: '8px 4px', textAlign: 'center' }}>
+            <div style={{ fontSize: 17, fontWeight: 950, color: String(color) }}>{String(value)}</div>
+            <div style={{ fontSize: 9, color: '#9CA3AF', marginTop: 2 }}>{String(label)}</div>
+          </div>
+        ))}
+      </div>
+      {(center?.recommendedActions || []).slice(0, 3).map(action => (
+        <div key={action.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#FFF7ED', borderRadius: 10, padding: '7px 9px', marginBottom: 6, fontSize: 11, color: '#92400E', fontWeight: 800 }}>
+          <span>{action.label}</span><span>{action.count}건</span>
+        </div>
+      ))}
+      {queueItems.length > 0 && <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {queueItems.map(item => (
+          <div key={item.id} style={{ background: '#F8F6FF', borderRadius: 10, padding: '8px 9px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 11, fontWeight: 900, color: '#1E1B4B' }}>
+              <span>{item.source} · {item.buyerName || '고객'}</span><span>{item.priority === 'high' ? '긴급' : item.status}</span>
+            </div>
+            <div style={{ fontSize: 10, color: '#6B7280', marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.serviceType || '서비스'} · {item.message || '메모 없음'}</div>
+          </div>
+        ))}
+      </div>}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 10 }}>
+        <button onClick={onOpenChat} style={{ border: 'none', borderRadius: 12, padding: '9px 10px', fontSize: 12, fontWeight: 900, background: '#7C3AED', color: '#fff', cursor: 'pointer' }}>채팅/초안 확인</button>
+        <button onClick={onOpenManage} style={{ border: 'none', borderRadius: 12, padding: '9px 10px', fontSize: 12, fontWeight: 900, background: '#EDE9FE', color: '#6D28D9', cursor: 'pointer' }}>계정·프로필 정리</button>
+      </div>
     </Card>
   );
 }
@@ -661,6 +731,8 @@ export default function HomePage() {
   const [chatFromCache, setChatFromCache] = useState(false);
   const [chatRateLimited, setChatRateLimited] = useState(false);
   const [chatHydrationFailedCount, setChatHydrationFailedCount] = useState(0);
+  const [operationsCenter, setOperationsCenter] = useState<OperationsCenterState | null>(null);
+  const [operationsCenterLoading, setOperationsCenterLoading] = useState(false);
   const [partyMaintenanceChecklistStore, setPartyMaintenanceChecklistStore] = useState<PartyMaintenanceChecklistStore>({});
   const [regeneratingPinKey, setRegeneratingPinKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -681,6 +753,16 @@ export default function HomePage() {
       if (!res.ok) return;
       setSafeMode(await res.json() as SafeModeState);
     } catch { /* 안전 모드 배너는 보조 정보라 홈 조회를 막지 않음 */ }
+  };
+
+  const fetchOperationsCenter = async () => {
+    setOperationsCenterLoading(true);
+    try {
+      const res = await fetch('/api/operations-center/summary');
+      if (!res.ok) return;
+      setOperationsCenter(await res.json() as OperationsCenterState);
+    } catch { /* 운영센터는 보조 정보라 홈 조회를 막지 않음 */ }
+    finally { setOperationsCenterLoading(false); }
   };
 
   const fetchPartyMaintenanceChecklists = async () => {
@@ -797,7 +879,7 @@ export default function HomePage() {
   };
 
   useEffect(() => {
-    fetchData(); fetchSellerStatus(); fetchSafeMode(); fetchChatAlerts(); fetchPartyMaintenanceChecklists();
+    fetchData(); fetchSellerStatus(); fetchSafeMode(); fetchChatAlerts(); fetchPartyMaintenanceChecklists(); fetchOperationsCenter();
     const timer = window.setInterval(() => fetchChatAlerts(true), 15000);
     return () => window.clearInterval(timer);
   }, []);
@@ -810,8 +892,8 @@ export default function HomePage() {
   const totalAccounts = stats.reduce((s, st) => s + st.accountCount, 0);
   const totalVacancy = totalMaxSlots - totalUsing;
 
-  // 수익 종합 계산: 0.9 × 인당 일 가격 × 30일 × 파티인원 수 - 파티별 OTT 구독료
-  const summary = buildMonthlyNetProfitSummary(data);
+  // 수익 종합 계산: Σ(그레이태그 파티원 판매가 ÷ 이용일수 × 30) × 0.9 + Σ(활성 수동 파티원 판매가 ÷ 이용일수 × 30) - Σ(운영 계정별 월 구독료)
+  const summary = buildMonthlyNetProfitSummary(data, manuals);
   const realNetProfit = summary.netProfit;
 
   const formatTime = (iso: string) => {
@@ -853,11 +935,15 @@ export default function HomePage() {
             <p style={{ fontSize: 12, color: '#9CA3AF', margin: '4px 0 0' }}>{formatTime(data.updatedAt)}{"최신화"}</p>
           )}
         </div>
-        <button onClick={() => { fetchData(); fetchSellerStatus(); fetchSafeMode(); fetchChatAlerts(); fetchPartyMaintenanceChecklists(); }} disabled={loading}
+        <button onClick={() => { fetchData(); fetchSellerStatus(); fetchSafeMode(); fetchChatAlerts(); fetchPartyMaintenanceChecklists(); fetchOperationsCenter(); }} disabled={loading}
           style={{ background: '#EDE9FE', border: 'none', borderRadius: 12, padding: '8px 12px', cursor: loading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#7C3AED', fontWeight: 600, fontFamily: 'inherit', opacity: loading ? 0.7 : 1 }}>
           {loading ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <RefreshCw size={14} strokeWidth={2.5} />}
           {loading ? '조회중' : '새로고침'}
         </button>
+      </div>
+
+      <div style={{ marginBottom: 18, border: '2px solid #EDE9FE', borderRadius: 22, overflow: 'hidden', background: '#F8F6FF' }}>
+        <ManagePage />
       </div>
 
       {safeMode && (
@@ -943,9 +1029,9 @@ export default function HomePage() {
               <StatusBadge tone={sellerStatus?.ok ? 'success' : 'warning'}>{sellerStatus?.ok ? '운영 정상' : '확인 필요'}</StatusBadge>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-              <StatCard label="계정" value={`${totalAccounts}개`} helper="활성 운영 계정" tone="info" />
+              <StatCard label="계정" value={`${totalAccounts}개`} helper="실제 유지중 파티 계정" tone="info" />
               <StatCard label="파티원" value={`${totalUsing}/${totalMaxSlots}`} helper={`빈자리 ${Math.max(0, totalVacancy)}개`} tone={totalVacancy > 0 ? 'warning' : 'success'} />
-              <StatCard label="예상 순수익" value={`${realNetProfit.toLocaleString()}원`} helper="일단가×30×인원×0.9 - 구독료" tone={realNetProfit >= 0 ? 'success' : 'danger'} />
+              <StatCard label="예상 순수익" value={`${realNetProfit.toLocaleString()}원`} helper="그레이태그 월환산×0.9 + 수동 월환산 - 구독료" tone={realNetProfit >= 0 ? 'success' : 'danger'} />
               <StatCard label="채움률" value={`${totalMaxSlots > 0 ? Math.round(totalUsing / totalMaxSlots * 100) : 0}%`} helper="서비스 전체 기준" tone={totalVacancy > 0 ? 'warning' : 'success'} />
             </div>
           </section>
@@ -966,6 +1052,14 @@ export default function HomePage() {
             </div>
           </Card>
 
+          <OperationsCenterPanel
+            state={operationsCenter}
+            loading={operationsCenterLoading}
+            onRefresh={fetchOperationsCenter}
+            onOpenChat={() => navigate('/chat')}
+            onOpenManage={() => navigate('/manage')}
+          />
+
           <ChatAlertsPanel
             alerts={chatAlerts}
             unreadCount={chatUnreadCount}
@@ -976,6 +1070,7 @@ export default function HomePage() {
             hydrationFailedCount={chatHydrationFailedCount}
             error={chatError}
             onOpenChat={() => navigate('/chat')}
+            onOpenChatRoom={(chatRoomUuid) => navigate(`/chat?room=${encodeURIComponent(chatRoomUuid)}`)}
           />
 
           <section style={{ marginBottom: 18 }}>
@@ -1006,10 +1101,15 @@ export default function HomePage() {
             borderRadius: 20, padding: '20px', marginBottom: 20, color: '#fff',
           }}>
             <div style={{ background: 'rgba(0,0,0,0.15)', borderRadius: 12, padding: '12px', marginBottom: 14, textAlign: 'center' }}>
-              <p style={{ fontSize: 11, opacity: 0.75, margin: 0, fontWeight: 500 }}>{"월 순수익 · 일단가×30×인원×0.9 - 구독료"}</p>
+              <p style={{ fontSize: 11, opacity: 0.75, margin: 0, fontWeight: 500 }}>{"월 순수익 · 그레이태그 월환산×0.9 + 수동 월환산 - 구독료"}</p>
               <p style={{ fontSize: 32, fontWeight: 800, margin: '6px 0 0', lineHeight: 1 }}>{realNetProfit.toLocaleString()}{"원"}</p>
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 8, padding: '5px 10px', borderRadius: 999, background: 'rgba(255,255,255,0.14)', fontSize: 11, fontWeight: 800 }}>
+                <span>{"풀파티시 "}{summary.fullPartyNetProfit.toLocaleString()}{"원"}</span>
+                <span style={{ opacity: 0.8 }}>{summary.fullPartyUpside >= 0 ? `+${summary.fullPartyUpside.toLocaleString()}원` : `${summary.fullPartyUpside.toLocaleString()}원`}</span>
+              </div>
               <p style={{ fontSize: 10, opacity: 0.75, margin: '4px 0 0' }}>
                 {"월 총수입 "}{summary.totalGrossIncome.toLocaleString()}{"원 · 수수료 -"}{summary.graytagFee.toLocaleString()}{"원 · 구독료 -"}{summary.subscriptionCost.toLocaleString()}{"원"}
+                {summary.manualIncome > 0 ? <> · {"수동 월환산 +"}{summary.manualIncome.toLocaleString()}{"원"}</> : null}
               </p>
               {/* 서비스별 순수익 상세 */}
               {summary.svcDetails.length > 0 && (
@@ -1017,7 +1117,7 @@ export default function HomePage() {
                   {summary.svcDetails.map(d => (
                     <div key={d.serviceType} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.12)', borderRadius: 7, padding: '4px 10px' }}>
                       <span style={{ fontSize: 11, fontWeight: 600 }}>{d.serviceType} {d.accountCount}파티 · {d.partyMemberCount}명</span>
-                      <span style={{ fontSize: 11, fontWeight: 700 }}>{(d.netProfit / 10000).toFixed(1)}만원</span>
+                      <span style={{ fontSize: 11, fontWeight: 700 }}>{(d.netProfit / 10000).toFixed(1)}만원 · 풀 {(d.fullPartyNetProfit / 10000).toFixed(1)}만원</span>
                     </div>
                   ))}
                 </div>
@@ -1126,11 +1226,6 @@ export default function HomePage() {
 
           {/* 파티 피드백 */}
           <PartyFeedbackPanel manageData={data} />
-
-          {/* 관리 페이지 인라인 */}
-          <div style={{ marginTop: 8, borderTop: '2px solid #EDE9FE', paddingTop: 4 }}>
-            <ManagePage />
-          </div>
 
           {/* 월간 캘린더 + 구독설정 */}
           <div style={{ marginTop: 8, borderTop: '2px solid #EDE9FE', paddingTop: 4 }}>

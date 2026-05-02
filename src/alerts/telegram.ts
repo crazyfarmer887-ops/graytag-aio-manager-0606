@@ -1,4 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
 
 export type SellerAlertResult =
   | { sent: true; reason: 'sent' }
@@ -81,15 +85,33 @@ export async function sendSellerAlert(input: SellerAlertInput): Promise<SellerAl
   }
 
   const fetcher = input.fetchImpl || (globalThis.fetch as unknown as FetchLike | undefined);
-  if (!fetcher) return { sent: false, reason: 'failed' };
+  const text = buildText(input);
+  const body = JSON.stringify({ chat_id: chatId, text, disable_web_page_preview: true });
+
+  if (fetcher) {
+    try {
+      const res = await fetcher(`https://api.telegram.org/bot${encodeURIComponent(botToken)}/sendMessage`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      });
+      if (res.ok) {
+        sentAtByKey[key] = nowMs;
+        saveState(statePath, { sentAtByKey });
+        return { sent: true, reason: 'sent' };
+      }
+    } catch {
+      // Fall back to curl below. Some server Node fetch setups fail to reach Telegram while curl works.
+    }
+  }
 
   try {
-    const res = await fetcher(`https://api.telegram.org/bot${encodeURIComponent(botToken)}/sendMessage`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text: buildText(input), disable_web_page_preview: true }),
-    });
-    if (!res.ok) return { sent: false, reason: 'failed' };
+    await execFileAsync('curl', [
+      '-fsS', '--max-time', '15', '-X', 'POST',
+      `https://api.telegram.org/bot${botToken}/sendMessage`,
+      '-H', 'Content-Type: application/json',
+      '--data-binary', body,
+    ], { timeout: 20000, maxBuffer: 128 * 1024 });
     sentAtByKey[key] = nowMs;
     saveState(statePath, { sentAtByKey });
     return { sent: true, reason: 'sent' };

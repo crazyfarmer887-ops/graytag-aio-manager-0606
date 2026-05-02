@@ -32,6 +32,7 @@ interface Account {
   };
 }
 interface ServiceGroup { serviceType: string; accounts: Account[]; totalUsingMembers: number; totalActiveMembers: number; totalIncome: number; totalRealized: number; }
+interface EmailAlias { id: number | string; email: string; enabled?: boolean; }
 interface ManageData {
   services: ServiceGroup[];
   onSaleByKeepAcct: Record<string, OnSaleProduct[]>;
@@ -59,11 +60,12 @@ const getPartyMax = (svc: string) => PARTY_MAX[svc] || 6;
 const USING_SET = new Set(['Using', 'UsingNearExpiration', 'DeliveredAndCheckPrepaid']);
 const ACTIVE_SET = new Set(['Using','UsingNearExpiration','Delivered','Delivering','DeliveredAndCheckPrepaid','LendingAcceptanceWaiting','Reserved','OnSale']);
 const VERIFYING_SET = new Set(['DeliveredAndCheckPrepaid']);
+const isAccountCheckingMember = (m: Pick<Member, 'status' | 'statusName'>) => VERIFYING_SET.has(m.status) || String(m.statusName || '').includes('계정확인중') || String(m.statusName || '').includes('계정 확인중');
 
 const STATUS_BADGE: Record<string, { label: string; color: string; bg: string }> = {
   Using:                       { label:'이용 중',   color:'#7C3AED', bg:'#F5F3FF' },
   UsingNearExpiration:         { label:'만료 임박',  color:'#D97706', bg:'#FFFBEB' },
-  DeliveredAndCheckPrepaid:    { label:'계정 확인중', color:'#D97706', bg:'#FFFBEB' },
+  DeliveredAndCheckPrepaid:    { label:'계정 확인중', color:'#2563EB', bg:'#EFF6FF' },
   OnSale:                      { label:'판매 중',   color:'#059669', bg:'#ECFDF5' },
   Delivered:                   { label:'전달 완료',  color:'#2563EB', bg:'#EFF6FF' },
   Delivering:                  { label:'전달 중',   color:'#0891B2', bg:'#ECFEFF' },
@@ -75,9 +77,12 @@ const STATUS_BADGE: Record<string, { label: string; color: string; bg: string }>
   CancelByNoShow:              { label:'취소(노쇼)', color:'#EF4444', bg:'#FFF0F0' },
   CancelByDepositRejection:    { label:'취소(입금)', color:'#EF4444', bg:'#FFF0F0' },
   CancelByInspectionRejection: { label:'취소(검수)', color:'#EF4444', bg:'#FFF0F0' },
+  CancelByLendingRejection:    { label:'취소(거절)', color:'#EF4444', bg:'#FFF0F0' },
 };
 
-const bge = (s: string, n: string) => STATUS_BADGE[s] || { label:n||s, color:'#6B7280', bg:'#F3F4F6' };
+const bge = (s: string, n: string) => (String(n || '').includes('계정확인중') || String(n || '').includes('계정 확인중'))
+  ? { label:'계정 확인중', color:'#2563EB', bg:'#EFF6FF' }
+  : (STATUS_BADGE[s] || { label:n||s, color:'#6B7280', bg:'#F3F4F6' });
 const svcLogo = (s: string) => CATEGORIES.find(c => c.label===s || s.includes(c.label.slice(0,3)))?.logo;
 const svcColors = (s: string) => { const c = CATEGORIES.find(c => c.label===s || s.includes(c.label.slice(0,3))); return { color: c?.color||'#6B7280', bg: c?.bg||'#F3F4F6' }; };
 const fmtMoney = (n: number) => n > 0 ? n.toLocaleString()+'원' : '-';
@@ -120,6 +125,53 @@ interface ManualMember {
 const SOURCE_PRESETS = ['당근마켓', '에브리타임', '지인소개', '번개장터', '카카오톡', '네이버카페', '인스타그램', '기타'];
 
 type FilterMode = 'using'|'active'|'all';
+
+function ManualResponseQueuePanel() {
+  const [source, setSource] = useState('카카오톡');
+  const [buyerName, setBuyerName] = useState('');
+  const [message, setMessage] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+
+  const submit = async () => {
+    if (!buyerName.trim() && !message.trim()) return;
+    setSaving(true); setResult(null);
+    try {
+      const res = await fetch('/api/operations-center/manual-response-queue', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source, buyerName, message, priority: source === '카카오톡' ? 'normal' : 'low' }),
+      });
+      const json = await res.json() as { ok?: boolean; error?: string };
+      if (!res.ok || !json.ok) throw new Error(json.error || '응대 큐 저장 실패');
+      setBuyerName(''); setMessage(''); setResult('응대 큐에 저장했어요. 홈 운영센터와 채팅 화면에서 확인하세요.');
+    } catch (e: any) { setResult(e.message || '응대 큐 저장 실패'); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div style={{ background:'#fff', borderRadius:18, padding:14, marginBottom:14, boxShadow:'0 2px 12px rgba(167,139,250,0.08)', border:'1.5px solid #F3F0FF' }}>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, marginBottom:10 }}>
+        <div>
+          <div style={{ fontSize:14, fontWeight:900, color:'#1E1B4B' }}>수동 고객/카카오톡 응대 큐</div>
+          <div style={{ fontSize:11, color:'#9CA3AF', marginTop:3 }}>대시보드 밖에서 온 문의를 운영센터에 남겨두기</div>
+        </div>
+        <span style={{ fontSize:10, color:'#7C3AED', background:'#F5F3FF', borderRadius:999, padding:'4px 8px', fontWeight:900 }}>운영센터 저장</span>
+      </div>
+      <div style={{ display:'grid', gridTemplateColumns:'110px 1fr', gap:8, marginBottom:8 }}>
+        <select value={source} onChange={e => setSource(e.target.value)} style={{ border:'1px solid #EDE9FE', borderRadius:10, padding:'8px', fontSize:12, fontFamily:'inherit' }}>
+          <option value="카카오톡">카카오톡</option>
+          <option value="수동고객">수동고객</option>
+          <option value="그레이태그">그레이태그</option>
+          <option value="기타">기타</option>
+        </select>
+        <input value={buyerName} onChange={e => setBuyerName(e.target.value)} placeholder="고객명/닉네임" style={{ border:'1px solid #EDE9FE', borderRadius:10, padding:'8px 10px', fontSize:12, fontFamily:'inherit' }} />
+      </div>
+      <textarea value={message} onChange={e => setMessage(e.target.value)} placeholder="문의 내용 또는 해야 할 답변 메모" rows={2} style={{ width:'100%', boxSizing:'border-box', border:'1px solid #EDE9FE', borderRadius:12, padding:'9px 10px', fontSize:12, fontFamily:'inherit', resize:'vertical' }} />
+      <button onClick={submit} disabled={saving || (!buyerName.trim() && !message.trim())} style={{ marginTop:8, width:'100%', border:'none', borderRadius:12, padding:'10px', background:'#7C3AED', color:'#fff', fontSize:12, fontWeight:900, cursor:saving?'not-allowed':'pointer', opacity:saving?0.65:1 }}>{saving ? '저장중' : '응대 큐에 추가'}</button>
+      {result && <div style={{ marginTop:8, fontSize:11, color:result.includes('실패')?'#EF4444':'#059669', fontWeight:800 }}>{result}</div>}
+    </div>
+  );
+}
 
 interface ProfileAuditProgress {
   status: 'idle' | 'running' | 'completed' | 'failed';
@@ -321,8 +373,30 @@ export default function ManagePage() {
   const [sessionStatus, setSessionStatus] = useState<any>(null);
   const [sessionLoading, setSessionLoading] = useState(false);
   const [accountCreateService, setAccountCreateService] = useState('티빙+웨이브');
+  const [accountCreatePrefix, setAccountCreatePrefix] = useState('');
   const [accountCreateLoading, setAccountCreateLoading] = useState(false);
   const [accountCreateResult, setAccountCreateResult] = useState<string|null>(null);
+  const [emailAliases, setEmailAliases] = useState<EmailAlias[]>([]);
+
+  const fetchEmailAliases = async () => {
+    try {
+      const res = await fetch('/api/sl/aliases?page=0');
+      const json = await res.json() as { aliases?: EmailAlias[] };
+      setEmailAliases((json.aliases || []).filter(alias => alias.enabled !== false));
+    } catch { setEmailAliases([]); }
+  };
+
+  const findEmailAliasId = (acct: Account): string | number | null => {
+    if (acct.generatedAccount?.emailId) return acct.generatedAccount.emailId;
+    const exact = emailAliases.find(alias => String(alias.email || '').toLowerCase() === acct.email.toLowerCase());
+    return exact?.id ?? null;
+  };
+
+  const openEmailDashboardForAccount = (acct: Account) => {
+    const emailId = findEmailAliasId(acct);
+    if (!emailId) return;
+    window.open(`https://email-verify.xyz/email/mail/${emailId}`, '_blank', 'noopener,noreferrer');
+  };
 
   const fetchSessionStatus = async () => {
     try {
@@ -346,11 +420,12 @@ export default function ManagePage() {
     setAccountCreateLoading(true); setAccountCreateResult(null);
     try {
       const res = await fetch('/api/generated-accounts/create', {
-        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ serviceType: accountCreateService }),
+        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ serviceType: accountCreateService, aliasPrefix: accountCreatePrefix.trim() }),
       });
       const json = await res.json() as any;
       if (!res.ok || !json.account) throw new Error(json.error || '계정 생성 실패');
-      setAccountCreateResult(`${json.account.email} 생성 완료 · 결제 체크 대기`);
+      setAccountCreateResult(`${json.account.email} 생성 완료 · 계정 관리에 표시됨 · 결제 체크 대기`);
+      setAccountCreatePrefix('');
       await doFetch();
     } catch (e: any) { setAccountCreateResult(`오류: ${e.message}`); }
     finally { setAccountCreateLoading(false); }
@@ -404,6 +479,7 @@ export default function ManagePage() {
   useEffect(() => {
     fetchManualMembers();
     fetchSessionStatus();
+    fetchEmailAliases();
     // 30초마다 세션 상태 갱신
     const sessionInterval = setInterval(fetchSessionStatus, 30000);
     return () => clearInterval(sessionInterval);
@@ -510,7 +586,7 @@ export default function ManagePage() {
       const res = await fetch('/api/my/management', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
       const json = await res.json() as any;
       if (!res.ok) setError(json.error);
-      else { setData(json); if (json.services?.[0]) setOpenService(json.services[0].serviceType); }
+      else { setData(json); if (json.services?.[0]) setOpenService(json.services[0].serviceType); void fetchEmailAliases(); }
     } catch (e: any) { setError(e.message); }
     finally { setLoading(false); }
   };
@@ -711,6 +787,10 @@ export default function ManagePage() {
   // 자동 쿠키가 항상 있으므로 빈 상태 가드 제거됨
 
   const sum = data?.summary;
+  const actualTotalAccounts = data?.services.reduce((total, svc) => total + svc.accounts.filter((acct) => (
+    acct.email !== '(직접전달)' &&
+    (acct.usingCount > 0 || getManualForAccount(acct.email, acct.serviceType).some((m) => m.status === 'active'))
+  )).length, 0) ?? 0;
 
   return (
     <div style={{ padding:'20px 16px 0' }}>
@@ -837,7 +917,7 @@ export default function ManagePage() {
             <div style={{ fontSize:12, opacity:0.85, marginBottom:10 }}>전체 현황</div>
             <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:6, textAlign:'center' }}>
               {[
-                { label:'계정 수', value:`${sum!.totalAccounts}개` },
+                { label:'계정 수', value:`${actualTotalAccounts}개` },
                 { label:'이용 중', value:`${sum!.totalUsingMembers}명` },
                 { label:'현재 수입', value:fmtMoney(sum!.totalIncome) },
                 { label:'정산 완료', value:fmtMoney(sum!.totalRealized) },
@@ -870,12 +950,20 @@ export default function ManagePage() {
                 {accountCreateLoading ? '생성중' : '새 계정 생성'}
               </button>
             </div>
+            <div style={{ marginTop:8 }}>
+              <label style={{ display:'block', fontSize:10, fontWeight:900, color:'#C2410C', marginBottom:4 }}>alias prefix 직접 설정</label>
+              <input value={accountCreatePrefix} onChange={e => setAccountCreatePrefix(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))} disabled={accountCreateLoading}
+                placeholder="예: wavve7, gtwavve44, netflix12"
+                style={{ width:'100%', boxSizing:'border-box', border:'1.5px solid #FED7AA', borderRadius:12, padding:'10px 12px', fontFamily:'inherit', fontSize:13, fontWeight:800, color:'#1E1B4B', background:'#fff' }} />
+              <div style={{ fontSize:10, color:'#9CA3AF', marginTop:4 }}>비워두면 서비스별 다음 번호를 자동 생성해요. 입력하면 해당 prefix로 SimpleLogin alias를 만들고 계정 관리에 바로 표시됩니다.</div>
+            </div>
             <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:6, marginTop:10 }}>
               {['이메일 자동 생성', '비밀번호 자동 생성', 'PIN 자동 생성', '더블이용권 묶음 관리'].map(label => <div key={label} style={{ background:'rgba(255,255,255,0.72)', borderRadius:10, padding:'7px 6px', fontSize:10, color:'#9A3412', fontWeight:800, textAlign:'center' }}>✓ {label}</div>)}
             </div>
             {accountCreateResult && <div style={{ marginTop:10, borderRadius:12, padding:'9px 10px', fontSize:12, fontWeight:800, background:accountCreateResult.startsWith('오류')?'#FFF0F0':'#ECFDF5', color:accountCreateResult.startsWith('오류')?'#EF4444':'#059669' }}>{accountCreateResult}</div>}
           </div>
 
+          <ManualResponseQueuePanel />
           <ProfileAuditPanel data={data} manualMembers={manualMembers} />
 
           {/* 필터 */}
@@ -895,6 +983,11 @@ export default function ManagePage() {
               const sc = svcColors(svc.serviceType);
               const logo = svcLogo(svc.serviceType);
               const isOpen = openService === svc.serviceType;
+              const serviceVerifyingCount = svc.accounts.reduce((sum, acct) => sum + acct.members.filter(isAccountCheckingMember).length, 0);
+              const actualPartyAccountCount = svc.accounts.filter((acct) => (
+                acct.email !== '(직접전달)' &&
+                (acct.usingCount > 0 || getManualForAccount(acct.email, acct.serviceType).some((m) => m.status === 'active'))
+              )).length;
               return (
                 <div key={svc.serviceType} style={{ background:'#fff', borderRadius:16, overflow:'hidden', boxShadow:'0 2px 12px rgba(167,139,250,0.08)', border:`1.5px solid ${isOpen?'#A78BFA':'#F3F0FF'}` }}>
                   <button onClick={() => setOpenService(isOpen ? null : svc.serviceType)} style={{ width:'100%', display:'flex', alignItems:'center', gap:12, padding:'14px 16px', background:'none', border:'none', cursor:'pointer', fontFamily:'inherit' }}>
@@ -903,7 +996,7 @@ export default function ManagePage() {
                     </div>
                     <div style={{ flex:1, textAlign:'left' }}>
                       <div style={{ fontSize:15, fontWeight:700, color:'#1E1B4B' }}>{svc.serviceType}</div>
-                      <div style={{ fontSize:11, color:'#9CA3AF', marginTop:2 }}>계정 {svc.accounts.length}개 · 이용중 {svc.totalUsingMembers}명</div>
+                      <div style={{ fontSize:11, color:'#9CA3AF', marginTop:2 }}>계정 {actualPartyAccountCount}개 · 이용중 {svc.totalUsingMembers}명{serviceVerifyingCount > 0 ? ` · 확인중 ${serviceVerifyingCount}명` : ''}</div>
                     </div>
                     <div style={{ textAlign:'right', flexShrink:0 }}>
                       <div style={{ fontSize:14, fontWeight:700, color:'#A78BFA' }}>{fmtMoney(svc.totalIncome)}</div>
@@ -918,18 +1011,21 @@ export default function ManagePage() {
                         const acctKey = `${acct.email}__${acct.serviceType}`;
                         const isAcctOpen = openAccount === acctKey;
                         const filteredMembers = acct.members.filter(m => {
-                          if (filter==='using') return USING_SET.has(m.status);
+                          if (filter==='using') return USING_SET.has(m.status) || isAccountCheckingMember(m);
                           if (filter==='active') return ACTIVE_SET.has(m.status);
                           return true;
                         });
                         const hasOnSale = (data?.onSaleByKeepAcct?.[acct.email]?.length ?? 0) > 0;
-                        if (filter !== 'all' && acct.usingCount===0 && acct.activeCount===0 && !hasOnSale && !acct.generatedAccount) return null;
-                        const filledSlots = acct.usingCount || acct.activeCount;
+                        const vi = getVacancyInfo(acct);
+                        if (filter === 'using' && acct.usingCount === 0 && vi.manualCount === 0) return null;
+                        if (filter === 'active' && acct.usingCount === 0 && acct.activeCount === 0 && vi.manualCount === 0 && !hasOnSale) return null;
+                        if (filter !== 'all' && acct.usingCount===0 && acct.activeCount===0 && vi.manualCount === 0 && !hasOnSale && !acct.generatedAccount) return null;
+                        const filledSlots = acct.usingCount + vi.manualCount;
                         const totalSlots = getPartyMax(acct.serviceType);
                         const fillPct = Math.round((filledSlots/totalSlots)*100);
                         const partyInfo = calcPartyDuration(acct.members);
-                        const vi = getVacancyInfo(acct);
-                        const verifyingCount = acct.members.filter(m => VERIFYING_SET.has(m.status)).length;
+                        const verifyingCount = acct.members.filter(isAccountCheckingMember).length;
+                        const emailAliasId = findEmailAliasId(acct);
                         const slotStates = buildAccountSlotStates({
                           totalSlots,
                           usingCount: acct.usingCount,
@@ -947,25 +1043,36 @@ export default function ManagePage() {
                                   {slotStates.map((state: SlotState, i) => {
                                     const filled = state !== 'empty';
                                     const background = state === 'using' ? '#A78BFA'
-                                      : state === 'verifying' ? '#D97706'
+                                      : state === 'verifying' ? '#2563EB'
                                       : state === 'manual' ? '#10B981'
                                       : state === 'recruiting' ? '#D1D5DB'
                                       : state === 'active' ? '#C4B5FD'
                                       : '#E9E4FF';
                                     const title = state === 'using' ? '이용중'
-                                      : state === 'verifying' ? '계정 확인중'
+                                      : state === 'verifying' ? '계정 확인중(파란색 추적)'
                                       : state === 'manual' ? '수동파티원'
                                       : state === 'recruiting' ? '모집 게시글 등록됨'
                                       : state === 'active' ? '활성'
                                       : '비어있음';
                                     return (
-                                      <div key={i} style={{ width: filled?7:6, height: filled?18:14, borderRadius:3,
+                                      <div key={i} title={title} style={{ width: filled?7:6, height: filled?18:14, borderRadius:3,
                                         background,
-                                        alignSelf:'flex-end', title }} />
+                                        alignSelf:'flex-end' }} />
                                     );
                                   })}
                                 </div>
                                 <div style={{ fontSize:9, color:'#9CA3AF' }}>{acct.usingCount + vi.manualCount}/{totalSlots}</div>
+                                {verifyingCount > 0 && <div style={{ fontSize:8, color:'#2563EB', fontWeight:900, whiteSpace:'nowrap' }}>확인중 {verifyingCount}</div>}
+                                <span
+                                  role="button"
+                                  tabIndex={emailAliasId ? 0 : -1}
+                                  onClick={(e) => { e.stopPropagation(); openEmailDashboardForAccount(acct); }}
+                                  onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && emailAliasId) { e.preventDefault(); e.stopPropagation(); openEmailDashboardForAccount(acct); } }}
+                                  title={emailAliasId ? '이메일 대시보드 새 탭 열기' : '연결된 이메일 대시보드 alias를 찾지 못했어요'}
+                                  aria-disabled={!emailAliasId}
+                                  style={{ marginTop:2, border:'none', borderRadius:7, padding:'2px 5px', background:emailAliasId?'#EEF2FF':'#F3F4F6', color:emailAliasId?'#4F46E5':'#D1D5DB', fontSize:8, fontWeight:900, cursor:emailAliasId?'pointer':'not-allowed', fontFamily:'inherit', lineHeight:1.2, whiteSpace:'nowrap' }}>
+                                  이메일
+                                </span>
                               </div>
                               <div style={{ flex:1, textAlign:'left', minWidth:0 }}>
                                 <div style={{ display:'flex', alignItems:'center', gap:6 }}>
@@ -1073,9 +1180,9 @@ export default function ManagePage() {
                                   <div style={{ fontSize:12, color:'#9CA3AF', textAlign:'center', padding:'8px 0' }}>해당 조건의 파티원 없음</div>
                                 ) : filteredMembers.map((m, idx) => {
                                   const b = bge(m.status, m.statusName);
-                                  const isVerifying = VERIFYING_SET.has(m.status);
+                                  const isVerifying = isAccountCheckingMember(m);
                                   const isUsing = USING_SET.has(m.status);
-                                  const circleBg = isVerifying ? '#D97706' : isUsing ? '#A78BFA' : ACTIVE_SET.has(m.status) ? '#C4B5FD' : '#E9E4FF';
+                                  const circleBg = isVerifying ? '#2563EB' : isUsing ? '#A78BFA' : ACTIVE_SET.has(m.status) ? '#C4B5FD' : '#E9E4FF';
                                   const circleColor = (isVerifying || isUsing || ACTIVE_SET.has(m.status)) ? '#fff' : '#9CA3AF';
                                   return (
                                     <div key={m.dealUsid} style={{ display:'flex', alignItems:'flex-start', gap:10, padding:'9px 0', borderBottom: idx<filteredMembers.length-1 ? '1px solid #F3F0FF' : 'none' }}>

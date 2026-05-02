@@ -78,16 +78,16 @@ const manuals = [
 ] as any;
 
 describe('dashboard stats', () => {
-  test('matches management service user counts instead of adding manual members again', () => {
+  test('matches account-management occupied slot counts by adding active manual members', () => {
     const stats = buildServiceStats(data, manuals);
     expect(stats).toHaveLength(1);
     expect(stats[0]).toMatchObject({
       serviceType: '넷플릭스',
       accountCount: 3,
-      usingMembers: 4,
+      usingMembers: 5,
       maxSlots: 15,
     });
-    expect(stats[0].fillRatio).toBeCloseTo(4 / 15);
+    expect(stats[0].fillRatio).toBeCloseTo(5 / 15);
   });
 
   test('calculates monthly net profit from daily member prices, Graytag fee, and OTT subscription cost', () => {
@@ -97,17 +97,92 @@ describe('dashboard stats', () => {
     expect(summary.graytagFee).toBe(694);
     expect(summary.subscriptionCost).toBe(51000);
     expect(summary.manualIncome).toBe(0);
+    expect(summary.fullPartyGrossIncome).toBe(26025);
+    expect(summary.fullPartyGraytagFee).toBe(2602);
+    expect(summary.fullPartyNetProfit).toBe(-27577);
+    expect(summary.fullPartyUpside).toBe(17177);
     expect(summary.svcDetails).toEqual([
       {
         serviceType: '넷플릭스',
         accountCount: 3,
         partyMemberCount: 4,
+        maxSlots: 15,
         grossIncome: 6940,
         graytagFee: 694,
         subscriptionCost: 51000,
         netProfit: -44754,
+        fullPartyGrossIncome: 26025,
+        fullPartyGraytagFee: 2602,
+        fullPartyNetProfit: -27577,
+        fullPartyUpside: 17177,
       },
     ]);
+  });
+
+  test('adds active manual members as direct monthly income without Graytag fee', () => {
+    const summary = buildMonthlyNetProfitSummary(data, [
+      { id: 'manual-active-monthly', serviceType: '넷플릭스', accountEmail: 'netflix@example.com', memberName: 'manual active', startDate: '2026-04-01', endDate: '2026-05-01', price: 6000, source: 'manual', memo: '', createdAt: '2026-04-01', status: 'active' },
+      { id: 'manual-expired', serviceType: '넷플릭스', accountEmail: 'netflix@example.com', memberName: 'manual expired', startDate: '2026-02-01', endDate: '2026-03-01', price: 9000, source: 'manual', memo: '', createdAt: '2026-02-01', status: 'expired' },
+      { id: 'manual-cancelled', serviceType: '넷플릭스', accountEmail: 'netflix@example.com', memberName: 'manual cancelled', startDate: '2026-04-01', endDate: '2026-05-01', price: 6000, source: 'manual', memo: '', createdAt: '2026-04-01', status: 'cancelled' },
+    ] as any, { today: '2026-04-15' });
+    expect(summary.manualIncome).toBe(6000);
+    expect(summary.totalGrossIncome).toBe(12940);
+    expect(summary.graytagFee).toBe(694);
+    expect(summary.netProfit).toBe(-38754);
+    expect(summary.fullPartyNetProfit).toBe(-21577);
+    expect(summary.fullPartyUpside).toBe(17177);
+  });
+
+  test('excludes recruiting/generated-only rows from actual party counts and subscription costs', () => {
+    const partyData = {
+      services: [{
+        serviceType: '넷플릭스',
+        totalUsingMembers: 1,
+        totalActiveMembers: 3,
+        totalIncome: 14000,
+        totalRealized: 0,
+        accounts: [
+          {
+            email: 'real-party@example.com', serviceType: '넷플릭스', usingCount: 1, activeCount: 1,
+            totalSlots: 5, totalIncome: 5000, totalRealizedIncome: 0, expiryDate: '2026-07-01',
+            members: [{ dealUsid: 'using-real', name: 'Real', status: 'Using', statusName: '사용중', price: '5,000원', purePrice: 5000, realizedSum: 0, progressRatio: '50%', startDateTime: '2026-06-01', endDateTime: '2026-07-01', remainderDays: 10, source: 'after' }],
+          },
+          {
+            email: 'on-sale-only@example.com', serviceType: '넷플릭스', usingCount: 0, activeCount: 1,
+            totalSlots: 5, totalIncome: 9000, totalRealizedIncome: 0, expiryDate: '2026-07-01',
+            members: [{ dealUsid: 'sale-only', name: null, status: 'OnSale', statusName: '판매중', price: '9,000원', purePrice: 9000, realizedSum: 0, progressRatio: '0%', startDateTime: '2026-06-01', endDateTime: '2026-07-01', remainderDays: 30, source: 'before' }],
+            onSaleAccount: { productCount: 1 },
+          },
+          {
+            email: 'generated-only@example.com', serviceType: '넷플릭스', usingCount: 0, activeCount: 0,
+            totalSlots: 5, totalIncome: 0, totalRealizedIncome: 0, expiryDate: null,
+            members: [], generatedAccount: { id: 'generated-1' },
+          },
+        ],
+      }],
+      onSaleByKeepAcct: {},
+      summary: { totalUsingMembers: 1, totalActiveMembers: 3, totalIncome: 14000, totalRealized: 0, totalAccounts: 3 },
+      updatedAt: '2026-06-01T00:00:00.000Z',
+    } as any;
+
+    const stats = buildServiceStats(partyData);
+    expect(stats[0]).toMatchObject({ accountCount: 1, usingMembers: 1, maxSlots: 5 });
+
+    const summary = buildMonthlyNetProfitSummary(partyData);
+    expect(summary.subscriptionCost).toBe(17000);
+    expect(summary.totalGrossIncome).toBe(5000);
+    expect(summary.graytagFee).toBe(500);
+    expect(summary.netProfit).toBe(-12500);
+    expect(summary.svcDetails[0]).toMatchObject({
+      serviceType: '넷플릭스',
+      accountCount: 1,
+      partyMemberCount: 1,
+      maxSlots: 5,
+      grossIncome: 5000,
+      subscriptionCost: 17000,
+      fullPartyGrossIncome: 25000,
+      fullPartyNetProfit: 5500,
+    });
   });
 
   test('builds expired party items and excludes cancelled deals from the expired party component', () => {
@@ -139,6 +214,45 @@ describe('dashboard stats', () => {
       price: '8,400원',
       source: 'manual',
     });
+  });
+
+
+  test('includes 계정확인중 Graytag members in daily inflow and groups counts by service', () => {
+    const rows = buildDailyInflow({
+      ...data,
+      services: [
+        ...data.services,
+        {
+          serviceType: '웨이브',
+          totalUsingMembers: 1,
+          totalActiveMembers: 1,
+          totalIncome: 7000,
+          totalRealized: 0,
+          accounts: [{
+            email: 'wavve-check@example.com',
+            serviceType: '웨이브',
+            usingCount: 1,
+            activeCount: 1,
+            totalSlots: 4,
+            totalIncome: 7000,
+            totalRealizedIncome: 0,
+            expiryDate: '2026-07-09',
+            members: [
+              { dealUsid: 'checking-1', name: 'Checking', status: 'Delivered', statusName: '계정확인중', price: '7,000원', purePrice: 7000, realizedSum: 0, progressRatio: '0%', startDateTime: null, inflowDateTime: '2026-04-30T09:00:00', endDateTime: '2026-07-09', remainderDays: 70, source: 'before' },
+            ],
+          }],
+        },
+      ],
+    } as any, manuals, { days: 3, today: '2026-04-30' });
+    const today = rows.find((row) => row.date === '2026-04-30');
+    expect(today?.members.find((member) => member.name === 'Checking')).toMatchObject({
+      serviceType: '웨이브',
+      status: 'Delivered',
+      statusName: '계정확인중',
+      startDate: '2026-04-30',
+      source: 'graytag',
+    });
+    expect(today?.byService['웨이브']).toBe(1);
   });
 
   test('builds maintenance targets from accounts with no current users or expiry within 7 days', () => {

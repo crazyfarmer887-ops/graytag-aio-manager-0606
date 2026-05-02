@@ -39,6 +39,35 @@ interface PriceRank {
 }
 
 const makeDefaultTitle = (svcLabel: string) => `✅ 이메일 코드 언제든지 셀프인증 가능! ✅ ${svcLabel} 프리미엄!`;
+const makeDefaultDesc = (svcLabel: string) => `✅ 이메일 코드 언제든지 셀프인증 가능! ✅ ${svcLabel} 프리미엄!\n구매 시 제공되는 "직접 운영하는" 이메일 코드 확인 사이트를 통해 언제든지 이메일을 확인하실 수 있으십니다!\n\n❤️ 1 1 1 원칙을 꼭 지켜주세요 ❤️\n1인 1기기 1계정 원칙이며 어길 시 약정에 의거 위약금 부과됩니다!`;
+
+const WRITE_PRODUCT_PRESET_KEY = 'graytag_write_product_presets_v1';
+interface WriteProductPreset { title: string; description: string; updatedAt: string; }
+type WriteProductPresetStore = Record<string, WriteProductPreset>;
+
+function loadWriteProductPresets(): WriteProductPresetStore {
+  try { return JSON.parse(localStorage.getItem(WRITE_PRODUCT_PRESET_KEY) || '{}') || {}; }
+  catch { return {}; }
+}
+
+function saveWriteProductPresets(store: WriteProductPresetStore) {
+  localStorage.setItem(WRITE_PRODUCT_PRESET_KEY, JSON.stringify(store));
+}
+
+function defaultPresetForService(serviceKey: string): WriteProductPreset {
+  const svcLabel = SERVICES.find(s => s.key === serviceKey)?.label || DEFAULT_SVC_LABEL;
+  return { title: makeDefaultTitle(svcLabel), description: makeDefaultDesc(svcLabel), updatedAt: '' };
+}
+
+function getPresetForService(serviceKey: string, store = loadWriteProductPresets()): WriteProductPreset {
+  const fallback = defaultPresetForService(serviceKey);
+  const preset = store[serviceKey];
+  return {
+    title: preset?.title?.trim() || fallback.title,
+    description: preset?.description?.trim() || fallback.description,
+    updatedAt: preset?.updatedAt || '',
+  };
+}
 
 export default function WritePage() {
   const cookies = loadCookies();
@@ -52,9 +81,9 @@ export default function WritePage() {
   const [dailyPrice, setDailyPrice] = useState('');
   const [priceMode, setPriceMode] = useState<PriceMode>('total');
   const [repeat, setRepeat] = useState(1);
-  const [title, setTitle] = useState(() => makeDefaultTitle(DEFAULT_SVC_LABEL));
-
-  const makeDefaultDesc = (svcLabel: string) => `✅ 이메일 코드 언제든지 셀프인증 가능! ✅ ${svcLabel} 프리미엄!\n구매 시 제공되는 "직접 운영하는" 이메일 코드 확인 사이트를 통해 언제든지 이메일을 확인하실 수 있으십니다!\n\n❤️ 1 1 1 원칙을 꼭 지켜주세요 ❤️\n1인 1기기 1계정 원칙이며 어길 시 약정에 의거 위약금 부과됩니다!`;
+  const [productPresetStore, setProductPresetStore] = useState<WriteProductPresetStore>(() => loadWriteProductPresets());
+  const [presetNotice, setPresetNotice] = useState('');
+  const [title, setTitle] = useState(() => getPresetForService(DEFAULT_SERVICE_KEY).title);
 
   const makeDefaultKeepMemo = (emailId?: number|string, pin?: string, profileName?: string) => {
     const eid = emailId || '{EMAIL_ID}';
@@ -63,7 +92,7 @@ export default function WritePage() {
     return profileName?.trim() ? buildProfileWarningMemo(profileName, baseMemo) : baseMemo;
   };
 
-  const [description, setDescription] = useState(() => makeDefaultDesc(DEFAULT_SVC_LABEL));
+  const [description, setDescription] = useState(() => getPresetForService(DEFAULT_SERVICE_KEY).description);
 
   // 계정 전달
   const [keepAcct, setKeepAcct] = useState('');
@@ -88,6 +117,42 @@ export default function WritePage() {
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const getCurrentPreset = (serviceKey = service) => getPresetForService(serviceKey, productPresetStore);
+
+  const applyPresetForService = (serviceKey = service) => {
+    const preset = getPresetForService(serviceKey, productPresetStore);
+    setTitle(preset.title);
+    setDescription(preset.description);
+    setPresetNotice(preset.updatedAt ? '저장된 기본값을 불러왔어요.' : '서비스 기본값을 불러왔어요.');
+  };
+
+  const saveCurrentAsPreset = () => {
+    const next = {
+      ...productPresetStore,
+      [service]: { title: title.trim(), description: description.trim(), updatedAt: new Date().toISOString() },
+    };
+    saveWriteProductPresets(next);
+    setProductPresetStore(next);
+    setPresetNotice('현재 제목·설명을 이 서비스 기본값으로 저장했어요.');
+  };
+
+  const resetPresetForService = () => {
+    const next = { ...productPresetStore };
+    delete next[service];
+    saveWriteProductPresets(next);
+    setProductPresetStore(next);
+    const fallback = defaultPresetForService(service);
+    setTitle(fallback.title);
+    setDescription(fallback.description);
+    setPresetNotice('저장된 기본값을 초기화하고 원래 기본값으로 되돌렸어요.');
+  };
+
+  const shouldAutoSwapPreset = (value: string, serviceKey: string, field: 'title' | 'description') => {
+    const saved = getPresetForService(serviceKey, productPresetStore)[field];
+    const fallback = defaultPresetForService(serviceKey)[field];
+    return value === saved || value === fallback;
+  };
 
   // 남은 일수 계산
   const calcDays = () => {
@@ -589,18 +654,13 @@ export default function WritePage() {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
           {SERVICES.map(s => (
             <button key={s.key} onClick={() => {
+              const previousService = service;
+              const previousTitle = title;
+              const previousDescription = description;
               setService(s.key);
-              // 제목이 기본값이면 서비스명 교체
-              setTitle(prev => {
-                const prevLabel = SERVICES.find(sv => sv.key === service)?.label || '';
-                if (prev === makeDefaultTitle(prevLabel)) return makeDefaultTitle(s.label);
-                return prev;
-              });
-              setDescription(prev => {
-                const prevLabel = SERVICES.find(sv => sv.key === service)?.label || '';
-                if (prev === makeDefaultDesc(prevLabel)) return makeDefaultDesc(s.label);
-                return prev;
-              });
+              setTitle(shouldAutoSwapPreset(previousTitle, previousService, 'title') ? getPresetForService(s.key, productPresetStore).title : previousTitle);
+              setDescription(shouldAutoSwapPreset(previousDescription, previousService, 'description') ? getPresetForService(s.key, productPresetStore).description : previousDescription);
+              setPresetNotice('');
             }} style={{
               padding: '10px 12px', borderRadius: 12, cursor: 'pointer',
               display: 'flex', alignItems: 'center', gap: 10, fontFamily: 'inherit',
@@ -619,13 +679,40 @@ export default function WritePage() {
         </div>
       </div>
 
+      {/* 글 기본값 프리셋 */}
+      <div style={{ ...card, background: '#FAFAFF' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 900, color: '#1E1B4B' }}>글 기본값 프리셋</div>
+            <div style={{ fontSize: 10, color: '#9CA3AF', marginTop: 2 }}>
+              {getCurrentPreset().updatedAt ? '이 서비스에 저장된 기본값이 있어요.' : '아직 저장된 기본값이 없어 서비스 기본 문구를 써요.'}
+            </div>
+          </div>
+          <span style={{ flexShrink: 0, fontSize: 10, color: '#7C3AED', background: '#EDE9FE', borderRadius: 999, padding: '4px 8px', fontWeight: 900 }}>
+            {SERVICES.find(s => s.key === service)?.label}
+          </span>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 7 }}>
+          <button onClick={saveCurrentAsPreset} disabled={!title.trim() || !description.trim()} style={{ background: '#A78BFA', color: '#fff', border: 'none', borderRadius: 10, padding: '9px 8px', fontSize: 11, fontWeight: 900, cursor: (!title.trim() || !description.trim()) ? 'not-allowed' : 'pointer', opacity: (!title.trim() || !description.trim()) ? 0.6 : 1, fontFamily: 'inherit' }}>
+            현재 제목·설명 기본값으로 저장
+          </button>
+          <button onClick={() => applyPresetForService()} style={{ background: '#EDE9FE', color: '#7C3AED', border: 'none', borderRadius: 10, padding: '9px 8px', fontSize: 11, fontWeight: 900, cursor: 'pointer', fontFamily: 'inherit' }}>
+            기본값 불러오기
+          </button>
+          <button onClick={resetPresetForService} style={{ gridColumn: '1 / -1', background: '#FFF7ED', color: '#C2410C', border: '1px solid #FED7AA', borderRadius: 10, padding: '8px 8px', fontSize: 11, fontWeight: 900, cursor: 'pointer', fontFamily: 'inherit' }}>
+            기본값 초기화
+          </button>
+        </div>
+        {presetNotice && <div style={{ marginTop: 8, fontSize: 11, color: '#7C3AED', background: '#F5F3FF', borderRadius: 8, padding: '7px 9px' }}>{presetNotice}</div>}
+      </div>
+
       {/* ② 제목 */}
       <div style={card}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
           <label style={{ ...labelStyle, marginBottom: 0, display: 'flex', alignItems: 'center', gap: 5 }}>
             <Type size={12} color="#A78BFA" /> 상품 제목 *
           </label>
-          <button onClick={() => setTitle(makeDefaultTitle(SERVICES.find(s => s.key === service)?.label || ''))} style={{
+          <button onClick={() => setTitle(getCurrentPreset().title)} style={{
             background: '#EDE9FE', border: 'none', borderRadius: 8, padding: '3px 8px',
             fontSize: 10, color: '#7C3AED', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
           }}>기본값</button>
@@ -719,7 +806,13 @@ export default function WritePage() {
 
       {/* ④ 상품 설명 */}
       <div style={card}>
-        <label style={labelStyle}>상품 설명 *</label>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+          <label style={{ ...labelStyle, marginBottom: 0 }}>상품 설명 *</label>
+          <button onClick={() => setDescription(getCurrentPreset().description)} style={{
+            background: '#EDE9FE', border: 'none', borderRadius: 8, padding: '3px 8px',
+            fontSize: 10, color: '#7C3AED', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+          }}>기본값</button>
+        </div>
         <div style={{ fontSize: 11, color: '#C4B5FD', marginBottom: 6 }}>
           ⚠️ 카톡·전화번호 등 외부 연락처 포함 불가
         </div>

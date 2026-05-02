@@ -77,7 +77,21 @@ export function serviceAliasStem(serviceType: string): string {
   return normalized || 'ott';
 }
 
-export function nextGeneratedAliasPrefix(serviceType: string, existingEmails: string[]): string {
+export function normalizeManualAliasPrefix(value: string): string {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return '';
+  if (raw.includes('@')) throw new Error('prefix에는 @ 포함 이메일 전체를 넣지 말고 앞부분만 입력하세요.');
+  if (/[^a-z0-9_-]/i.test(raw)) throw new Error('prefix는 영문/숫자만 입력하세요.');
+  const normalized = raw.replace(/[^a-z0-9]/g, '');
+  if (!/[a-z]/.test(normalized)) throw new Error('prefix에는 영문이 1자 이상 필요합니다.');
+  if (normalized.length < 3) throw new Error('prefix는 3자 이상이어야 합니다.');
+  if (normalized.length > 32) throw new Error('prefix는 32자 이하여야 합니다.');
+  return normalized;
+}
+
+export function nextGeneratedAliasPrefix(serviceType: string, existingEmails: string[], manualPrefix = ''): string {
+  const normalizedManual = normalizeManualAliasPrefix(manualPrefix);
+  if (normalizedManual) return normalizedManual;
   const stem = serviceAliasStem(serviceType);
   const pattern = new RegExp(`^${stem}(\\d+)(?:[.@]|$)`, 'i');
   let max = 0;

@@ -19,8 +19,9 @@ import { checkNetflixProfiles, fetchNetflixEmailCodeViaEmailServer } from './net
 import { extractGraytagChats, findLatestBuyerInquiryMessage } from './chat-message-summary';
 import { mergePartyMaintenanceChecklistState, type PartyMaintenanceChecklistStore } from '../lib/party-maintenance-checklist';
 import { buildProfileAssignment, type ProfileAssignment } from '../lib/profile-nickname';
-import { buildGeneratedAccount, deleteGeneratedAccountFromStore, extractSimpleLoginAliasRef, generateAccountPassword, mergeGeneratedAccountsIntoManagement, nextGeneratedAliasPrefix, normalizeGeneratedAccountPatch, type GeneratedAccountStore, type SimpleLoginAliasRef } from '../lib/generated-accounts';
+import { buildGeneratedAccount, deleteGeneratedAccountFromStore, extractSimpleLoginAliasRef, generateAccountPassword, mergeGeneratedAccountsIntoManagement, nextGeneratedAliasPrefix, normalizeGeneratedAccountPatch, normalizeManualAliasPrefix, type GeneratedAccountStore, type SimpleLoginAliasRef } from '../lib/generated-accounts';
 import { mergeOnSaleAccountsIntoManagement } from '../lib/on-sale-accounts';
+import { buildAccountCheckInflowStore, isAccountCheckStatus, type AccountCheckInflowStore } from '../lib/account-check-inflow';
 import { resolveAutoReplyPolicy } from './auto-reply-policy';
 import { normalizeBuyerMessage, messageFingerprint, messageTimestamp, isBuyerTextMessage } from './auto-reply-message';
 import { createAutoReplyJob, listAutoReplyJobs, loadAutoReplyJobStore, saveAutoReplyJobStore, updateAutoReplyJob, type AutoReplyJobStore } from './auto-reply-jobs';
@@ -28,6 +29,7 @@ import { routeAutoReply } from './auto-reply-router';
 import { buildHermesAutoReplyPrompt, parseHermesAutoReplyJson, type HermesAutoReplyResult } from './hermes-auto-reply';
 import { evaluateAutoReplySafety } from './auto-reply-safety';
 import { decideAutonomousReply } from './auto-reply-autonomy';
+import { buildOperationsCenter, createManualResponseQueueItem, mergeManualResponseQueueItem, summarizeManualResponseQueue, type ManualResponseQueueItem } from '../lib/operations-center';
 
 const EMAIL_SERVER = "http://127.0.0.1:3001";
 const app = new Hono();
@@ -49,6 +51,7 @@ const ADMIN_REQUIRED_GET_PREFIXES = [
   '/party-maintenance-checklists',
   '/profile-assignments',
   '/generated-accounts',
+  '/operations-center',
 ];
 
 function normalizedApiPath(path: string): string {
@@ -172,6 +175,7 @@ function maskSecret(value: string): string {
 // ─── Session Keeper 쿠키 자동 로드 ─────────────────────────
 const SESSION_COOKIE_PATH = '/home/ubuntu/graytag-session/cookies.json';
 const GENERATED_ACCOUNTS_PATH = '/home/ubuntu/.hermes/hermes-agent/graytag-aio-manager-0606/data/generated-accounts.json';
+const ACCOUNT_CHECK_INFLOW_PATH = '/home/ubuntu/.hermes/hermes-agent/graytag-aio-manager-0606/data/account-check-inflow.json';
 const EMAIL_DASHBOARD_ENV_PATH = '/home/ubuntu/.hermes/hermes-agent/graytag-email-verify-dashboard-5588/.env';
 const SIMPLELOGIN_API = 'https://app.simplelogin.io/api';
 
@@ -224,6 +228,21 @@ function writeGeneratedAccountStore(store: GeneratedAccountStore) {
   writeFileSync(GENERATED_ACCOUNTS_PATH, JSON.stringify(store, null, 2), 'utf8');
 }
 
+
+function readAccountCheckInflowStore(): AccountCheckInflowStore {
+  try {
+    if (!existsSync(ACCOUNT_CHECK_INFLOW_PATH)) return {};
+    const parsed = JSON.parse(readFileSync(ACCOUNT_CHECK_INFLOW_PATH, 'utf8')) as AccountCheckInflowStore;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch { return {}; }
+}
+
+function writeAccountCheckInflowStore(store: AccountCheckInflowStore) {
+  const dir = dataDirFor(ACCOUNT_CHECK_INFLOW_PATH);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  writeFileSync(ACCOUNT_CHECK_INFLOW_PATH, JSON.stringify(store, null, 2), 'utf8');
+}
+
 function readEnvValueFromFile(path: string, key: string): string {
   try {
     if (!existsSync(path)) return '';
@@ -268,7 +287,7 @@ async function resolveSimpleLoginAliasIdByEmail(email: string, key: string): Pro
   return (await listSimpleLoginAliases(key)).find(alias => alias.id !== undefined && alias.email === target) || null;
 }
 
-async function createSimpleLoginCustomAlias(input: { serviceType: string; note: string; existingEmails: string[] }) {
+async function createSimpleLoginCustomAlias(input: { serviceType: string; note: string; existingEmails: string[]; manualPrefix?: string }) {
   const key = simpleLoginApiKey();
   if (!key) throw new Error('SIMPLELOGIN_API_KEY가 AIO 또는 이메일 대시보드 환경에 없어요.');
 
@@ -282,8 +301,9 @@ async function createSimpleLoginCustomAlias(input: { serviceType: string; note: 
   if (!signedSuffix) throw new Error('SimpleLogin alias suffix 옵션을 찾지 못했어요.');
 
   // POST https://app.simplelogin.io/api/v2/alias/custom/new
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    const aliasPrefix = nextGeneratedAliasPrefix(input.serviceType, baseExistingEmails);
+  const manualPrefix = normalizeManualAliasPrefix(input.manualPrefix || '');
+  for (let attempt = 0; attempt < (manualPrefix ? 1 : 6); attempt += 1) {
+    const aliasPrefix = nextGeneratedAliasPrefix(input.serviceType, baseExistingEmails, manualPrefix);
     const res = await fetch(`${SIMPLELOGIN_API}/v2/alias/custom/new?hostname=${encodeURIComponent(aliasPrefix)}`, {
       method: 'POST',
       headers: { Authentication: key, 'Content-Type': 'application/json' },
@@ -291,6 +311,7 @@ async function createSimpleLoginCustomAlias(input: { serviceType: string; note: 
     });
     const data = await res.json().catch(() => ({} as any)) as any;
     if (res.status === 409) {
+      if (manualPrefix) throw new Error(`이미 사용 중인 alias prefix예요: ${manualPrefix}`);
       baseExistingEmails.push(`${aliasPrefix}@already-used.local`);
       continue;
     }
@@ -544,6 +565,17 @@ async function rateLimitedFetch(url: string, options?: RequestInit, bypass = fal
 loadProxies();
 setInterval(loadProxies, 60 * 60 * 1000);
 
+
+function extractLenderDeals(payload: any): any[] {
+  const data = payload?.data ?? payload;
+  const deals = data?.data?.lenderDeals ?? data?.lenderDeals ?? payload?.lenderDeals ?? [];
+  return Array.isArray(deals) ? deals : [];
+}
+
+function isAccountCheckingDeal(deal: any): boolean {
+  return isAccountCheckStatus(deal);
+}
+
 async function safeJson(resp: Response) {
   if (resp.status === 302 || resp.status === 301) return { ok: false, redirect: true };
   const ct = resp.headers.get('content-type') || '';
@@ -620,9 +652,9 @@ app.post('/my/accounts', async (c) => {
     });
     return c.json({
       borrowerDeals: (br.data?.data?.borrowerDeals || []).map((d: any) => mapDeal(d, 'borrower')),
-      lenderDeals: (lr.data?.data?.lenderDeals || []).map((d: any) => mapDeal(d, 'lender')),
+      lenderDeals: extractLenderDeals(lr.data).map((d: any) => mapDeal(d, 'lender')),
       totalBorrower: (br.data?.data?.borrowerDeals || []).length,
-      totalLender: (lr.data?.data?.lenderDeals || []).length,
+      totalLender: extractLenderDeals(lr.data).length,
       cookieSource: body?.JSESSIONID?.trim() ? 'manual' : 'session-keeper',
     });
   } catch (e: any) { return c.json({ error: e.message }, 500); }
@@ -640,13 +672,15 @@ app.post('/generated-accounts/create', async (c) => {
   if (!serviceType) return c.json({ error: 'serviceType이 필요합니다' }, 400);
 
   try {
+    const aliasPrefix = normalizeManualAliasPrefix(String(body?.aliasPrefix || body?.prefix || '').trim());
     const now = new Date().toISOString();
     const pin = generateSixDigitPin();
     const password = generateAccountPassword();
     const alias = await createSimpleLoginCustomAlias({
       serviceType,
-      note: `[Graytag 계정 생성기] ${serviceType} · ${now}`,
+      note: `[Graytag 계정 생성기] ${serviceType} · ${aliasPrefix ? `prefix:${aliasPrefix} · ` : ''}${now}`,
       existingEmails: Object.values(readGeneratedAccountStore()).map(account => account.email),
+      manualPrefix: aliasPrefix,
     });
     const memo = makeEmailVerifyMemo(alias.id, pin);
     const pinResult = await updateEmailAliasPin({ accountEmail: alias.email, serviceType, aliases: [{ id: alias.id, email: alias.email, enabled: true }], pin }, now);
@@ -720,7 +754,7 @@ app.post('/my/management', async (c) => {
         );
         if (resp.status === 302 || resp.status === 301) break;
         const r = await safeJson(resp);
-        const deals: any[] = r.data?.data?.lenderDeals || [];
+        const deals: any[] = extractLenderDeals(r.data);
         collected.push(...deals);
         if (deals.length < 500) break;
       }
@@ -748,6 +782,12 @@ app.post('/my/management', async (c) => {
         allDeals.push(deal);
       }
     }
+
+    // 일별 파티 유입: 계정확인중 최초 반영일을 저장한다.
+    // 계정 사용중으로 바뀌면 최초 반영일을 유지해서 중복 유입으로 잡지 않고,
+    // 취소/삭제되면 저장소에서 제거해서 유입 그래프에서도 빠지게 한다.
+    const accountCheckInflow = buildAccountCheckInflowStore(allDeals, readAccountCheckInflowStore());
+    writeAccountCheckInflowStore(accountCheckInflow.store);
 
     // 계정확인중 거래: keepAcct가 없으면 채팅방에서 판매자가 전달한 계정 ID를 파싱해서 계정 관리에 반영
     {
@@ -789,6 +829,7 @@ app.post('/my/management', async (c) => {
       realizedSum: number;
       progressRatio: string;
       startDateTime: string | null;
+      inflowDateTime?: string | null;
       endDateTime: string | null;
       remainderDays: number;
       source: 'after' | 'before';
@@ -835,7 +876,7 @@ app.post('/my/management', async (c) => {
       const realizedNum = parseInt((deal.realizedSum || '0').replace(/[^0-9]/g, '') || '0');
       const priceNum = parseInt((deal.price || '0').replace(/[^0-9]/g, '') || '0');
       const isActive = ACTIVE_STATUSES.has(deal.dealStatus);
-      const isUsing = USING_STATUSES.has(deal.dealStatus);
+      const isUsing = USING_STATUSES.has(deal.dealStatus) || isAccountCheckingDeal(deal);
       const isFromAfter = afterDeals.some(d => d.dealUsid === deal.dealUsid);
 
       accountMap[key].members.push({
@@ -848,6 +889,7 @@ app.post('/my/management', async (c) => {
         realizedSum: realizedNum,
         progressRatio: deal.progressRatio || '0%',
         startDateTime: deal.startDateTime,
+        inflowDateTime: accountCheckInflow.inflowDateByDealUsid[String(deal.dealUsid || '')] || deal.startDateTime || deal.deliveredDateTime || deal.createdDateTime || deal.registeredDateTime || deal.dealRegisteredDateTime || deal.productRegisteredDateTime || deal.updatedAt || null,
         endDateTime: deal.endDateTime,
         remainderDays: deal.remainderDays,
         source: isFromAfter ? 'after' : 'before',
@@ -1240,26 +1282,45 @@ app.get('/chat/rooms', async (c) => {
       return c.json({ ..._chatRoomsCache, fromCache: true });
     }
 
-    // 여러 페이지 로드 (최대 5페이지 = 250건)
+    // 사용중 + 사용전(계정확인중 포함) 채팅방까지 로드한다.
     const allDeals: any[] = [];
-    for (let page = 1; page <= 2; page++) {
-      const resp = await rateLimitedFetch(
-        `https://graytag.co.kr/ws/lender/findAfterUsingLenderDeals?finishedDealIncluded=false&sorting=Latest&page=${page}&rows=500`,
-        { headers, redirect: 'manual' }
-      );
-      if (resp.status === 429) {
-        // rate-limit 백오프 — 캐시 반환 or 빈 배열
-        if (_chatRoomsCache) {
-          console.log("[chat/rooms] rate-limit 429 — 캐시 반환");
-          return c.json({ ..._chatRoomsCache, fromCache: true });
-        }
-        return c.json({ rooms: [], totalRooms: 0, unreadCount: 0, fromCache: false, rateLimited: true, updatedAt: new Date().toISOString() });
+    const seenDealUsids = new Set<string>();
+    const appendDeals = (deals: any[]) => {
+      for (const deal of deals) {
+        const id = String(deal?.dealUsid || '');
+        if (id && seenDealUsids.has(id)) continue;
+        if (id) seenDealUsids.add(id);
+        allDeals.push(deal);
       }
-      if (resp.status === 302 || resp.status === 301) return c.json({ error: '쿠키가 만료됐어요 (302 리다이렉트 — rate-limit 아님)', code: 'COOKIE_EXPIRED' }, 401);
-      const r = await safeJson(resp);
-      const deals = r.data?.data?.lenderDeals || [];
-      if (deals.length === 0) break;
-      allDeals.push(...deals);
+    };
+    const loadDealPagesForChatRooms = async (kind: 'after' | 'before') => {
+      const endpoint = kind === 'after' ? 'findAfterUsingLenderDeals' : 'findBeforeUsingLenderDeals';
+      const referer = kind === 'after' ? 'https://graytag.co.kr/lender/deal/listAfterUsing' : 'https://graytag.co.kr/lender/deal/list';
+      for (let page = 1; page <= 2; page++) {
+        const resp = await rateLimitedFetch(
+          `https://graytag.co.kr/ws/lender/${endpoint}?finishedDealIncluded=false&sorting=Latest&page=${page}&rows=500`,
+          { headers: { ...headers, Referer: referer }, redirect: 'manual' }
+        );
+        if (resp.status === 429) {
+          if (_chatRoomsCache) {
+            console.log("[chat/rooms] rate-limit 429 — 캐시 반환");
+            return 'rate-limited-cache';
+          }
+          return 'rate-limited-empty';
+        }
+        if (resp.status === 302 || resp.status === 301) return 'cookie-expired';
+        const r = await safeJson(resp);
+        const deals = extractLenderDeals(r.data);
+        if (deals.length === 0) break;
+        appendDeals(deals);
+      }
+      return 'ok';
+    };
+    for (const kind of ['after', 'before'] as const) {
+      const loaded = await loadDealPagesForChatRooms(kind);
+      if (loaded === 'rate-limited-cache') return c.json({ ..._chatRoomsCache, fromCache: true });
+      if (loaded === 'rate-limited-empty') return c.json({ rooms: [], totalRooms: 0, unreadCount: 0, fromCache: false, rateLimited: true, updatedAt: new Date().toISOString() });
+      if (loaded === 'cookie-expired') return c.json({ error: '쿠키가 만료됐어요 (302 리다이렉트 — rate-limit 아님)', code: 'COOKIE_EXPIRED' }, 401);
     }
 
     // 각 room의 lastMessage 가져오기 (병렬)
@@ -1396,8 +1457,8 @@ app.get('/chat/poll', async (c) => {
     if (afterResp.status === 302 || afterResp.status === 301) return c.json({ error: '쿠키 만료' }, 401);
     const afterR = await safeJson(afterResp);
     const beforeR = await safeJson(beforeResp);
-    const afterDeals = afterR.data?.data?.lenderDeals || [];
-    const beforeDeals = beforeR.data?.data?.lenderDeals || [];
+    const afterDeals = extractLenderDeals(afterR.data);
+    const beforeDeals = extractLenderDeals(beforeR.data);
     const allDeals = [...afterDeals, ...beforeDeals];
 
     // chatRoomUuid 중복 제거
@@ -1706,6 +1767,82 @@ const autoReplyLogHandler = (c: any) => {
 app.get('/chat/auto-reply-log', autoReplyLogHandler);
 app.get('/api/chat/auto-reply-log', autoReplyLogHandler);
 
+const DEFAULT_MANUAL_RESPONSE_QUEUE_PATH = '/home/ubuntu/.hermes/hermes-agent/graytag-aio-manager-0606/data/manual-response-queue.json';
+function manualResponseQueuePath(): string {
+  return process.env.MANUAL_RESPONSE_QUEUE_PATH || DEFAULT_MANUAL_RESPONSE_QUEUE_PATH;
+}
+
+function loadManualResponseQueue(): ManualResponseQueueItem[] {
+  try {
+    const path = manualResponseQueuePath();
+    if (!existsSync(path)) return [];
+    const raw = JSON.parse(readFileSync(path, 'utf8'));
+    return Array.isArray(raw?.items) ? raw.items : Array.isArray(raw) ? raw : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveManualResponseQueue(items: ManualResponseQueueItem[]): void {
+  const path = manualResponseQueuePath();
+  const dir = path.replace(/\/[^\/]+$/, '');
+  if (dir && dir !== path && !existsSync(dir)) mkdirSync(dir, { recursive: true });
+  writeFileSync(path, JSON.stringify({ items }, null, 2), 'utf8');
+}
+
+const operationsCenterSummaryHandler = (c: any) => {
+  AUTO_REPLY_MEMORY_STORE = loadAutoReplyJobStore(autoReplyJobsPath());
+  const manualQueueItems = loadManualResponseQueue();
+  const autoReplyJobs = listAutoReplyJobs(AUTO_REPLY_MEMORY_STORE, 200);
+  const center = buildOperationsCenter({ manualQueueItems, autoReplyJobs });
+  return c.json({ ok: true, center, manualQueueItems, autoReplyJobs: autoReplyJobs.slice(0, 20), updatedAt: new Date().toISOString() });
+};
+
+const manualResponseQueueHandler = (c: any) => {
+  const items = loadManualResponseQueue().sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  return c.json({ ok: true, items, summary: summarizeManualResponseQueue(items), updatedAt: new Date().toISOString() });
+};
+
+const createManualResponseQueueHandler = async (c: any) => {
+  const body = await c.req.json().catch(() => ({} as any)) as any;
+  const item = createManualResponseQueueItem({
+    source: body.source,
+    buyerName: body.buyerName,
+    serviceType: body.serviceType,
+    accountEmail: body.accountEmail,
+    message: body.message,
+    status: body.status,
+    priority: body.priority,
+    memo: body.memo,
+  });
+  if (!item.buyerName && !item.message) return c.json({ ok: false, error: 'buyerName 또는 message 중 하나는 필요해요.' }, 400);
+  const items = loadManualResponseQueue();
+  items.push(item);
+  saveManualResponseQueue(items);
+  return c.json({ ok: true, item, summary: summarizeManualResponseQueue(items) });
+};
+
+const updateManualResponseQueueHandler = async (c: any) => {
+  const { id } = c.req.param();
+  const body = await c.req.json().catch(() => ({} as any)) as any;
+  const items = loadManualResponseQueue();
+  const idx = items.findIndex((item) => item.id === id);
+  if (idx === -1) return c.json({ ok: false, error: '응대 항목을 찾을 수 없어요.' }, 404);
+  const item = mergeManualResponseQueueItem(items[idx], body);
+  items[idx] = item;
+  saveManualResponseQueue(items);
+  return c.json({ ok: true, item, summary: summarizeManualResponseQueue(items) });
+};
+
+app.get('/operations-center/summary', operationsCenterSummaryHandler);
+app.get('/api/operations-center/summary', operationsCenterSummaryHandler);
+app.get('/operations-center/manual-response-queue', manualResponseQueueHandler);
+app.get('/api/operations-center/manual-response-queue', manualResponseQueueHandler);
+app.post('/operations-center/manual-response-queue', createManualResponseQueueHandler);
+app.post('/api/operations-center/manual-response-queue', createManualResponseQueueHandler);
+app.patch('/operations-center/manual-response-queue/:id', updateManualResponseQueueHandler);
+app.patch('/api/operations-center/manual-response-queue/:id', updateManualResponseQueueHandler);
+
 async function scanAutoReplyCandidates(maxRooms = 10): Promise<any[]> {
   const cookies = loadSessionCookies();
   if (!cookies) return [];
@@ -1720,8 +1857,8 @@ async function scanAutoReplyCandidates(maxRooms = 10): Promise<any[]> {
   const afterR = afterResp.ok ? await safeJson(afterResp) : { data: null };
   const beforeR = beforeResp.ok ? await safeJson(beforeResp) : { data: null };
   const allDeals = [
-    ...(afterR.data?.data?.lenderDeals || afterR.data?.lenderDeals || []),
-    ...(beforeR.data?.data?.lenderDeals || beforeR.data?.lenderDeals || []),
+    ...extractLenderDeals(afterR.data),
+    ...extractLenderDeals(beforeR.data),
   ];
   const seen = new Set<string>();
   const candidates: any[] = [];
@@ -2100,7 +2237,7 @@ app.post('/my/onsale-products', async (c) => {
         { headers, redirect: 'manual' }
       );
       const r = await safeJson(resp);
-      const deals = r.data?.data?.lenderDeals || [];
+      const deals = extractLenderDeals(r.data);
       if (deals.length === 0) break;
       allDeals.push(...deals);
     }
@@ -2340,7 +2477,7 @@ app.post('/auto-sync-prices', async (c) => {
     );
     if (resp.status === 302) return c.json({ error: '쿠키 만료', code: 'COOKIE_EXPIRED' }, 401);
     const r = await safeJson(resp);
-    const deals = r.data?.data?.lenderDeals || [];
+    const deals = extractLenderDeals(r.data);
     if (deals.length === 0) break;
     allDeals.push(...deals);
   }
@@ -2480,7 +2617,7 @@ app.post('/bulk-update-keepmemo', async (c) => {
       { headers, redirect: 'manual' }
     );
     const r = await safeJson(resp);
-    const deals = r.data?.data?.lenderDeals || [];
+    const deals = extractLenderDeals(r.data);
     if (deals.length === 0) break;
     allDeals.push(...deals);
   }
@@ -2492,7 +2629,7 @@ app.post('/bulk-update-keepmemo', async (c) => {
       { headers, redirect: 'manual' }
     );
     const r = await safeJson(resp);
-    const deals = r.data?.data?.lenderDeals || [];
+    const deals = extractLenderDeals(r.data);
     if (deals.length === 0) break;
     allDeals.push(...deals);
   }
@@ -3587,7 +3724,7 @@ app.post("/chat/notice/send", async (c) => {
       ]);
       const [lb, la] = await Promise.all([safeJson(lbR), safeJson(laR)]);
       const seen = new Set();
-      for (const d of [...(lb.data?.data?.lenderDeals||[]),...(la.data?.data?.lenderDeals||[])]) {
+      for (const d of [...extractLenderDeals(lb.data), ...extractLenderDeals(la.data)]) {
         if (d.chatRoomUuid && !seen.has(d.dealUsid)) { seen.add(d.dealUsid); rooms.push(d); }
       }
     }

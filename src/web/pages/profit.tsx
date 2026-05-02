@@ -256,12 +256,17 @@ function estimateRenewalDay(acct: Account): number | null {
   return null;
 }
 
+const ACTUAL_PARTY_SET = new Set(['Using', 'UsingNearExpiration', 'DeliveredAndCheckPrepaid']);
+const isAccountCheckingMember = (m: Pick<Member, 'status' | 'statusName'>) => (
+  m.status === 'DeliveredAndCheckPrepaid' ||
+  String(m.statusName || '').includes('계정확인중') ||
+  String(m.statusName || '').includes('계정 확인중')
+);
+const isActualPartyMember = (m: Pick<Member, 'status' | 'statusName'>) => ACTUAL_PARTY_SET.has(m.status) || isAccountCheckingMember(m);
+
 // ─── 파티원 일당 계산 ─────────────────────────────────────────
 function calcDailyRate(m: Member): number {
-  if (m.purePrice <= 0) return 0;
-  const ACTIVE = ['Using', 'UsingNearExpiration', 'Delivered', 'Delivering',
-    'DeliveredAndCheckPrepaid', 'LendingAcceptanceWaiting', 'Reserved', 'OnSale'];
-  if (!ACTIVE.includes(m.status)) return 0;
+  if (m.purePrice <= 0 || !isActualPartyMember(m)) return 0;
 
   const start = parseDate(m.startDateTime);
   const end = parseDate(m.endDateTime);
@@ -312,6 +317,7 @@ function calcAccountDays(acct: Account): number {
   let earliest: Date | null = null;
   let latest: Date | null = null;
   for (const m of acct.members) {
+    if (!isActualPartyMember(m)) continue;
     const s = parseDate(m.startDateTime);
     const e = parseDate(m.endDateTime);
     if (s && (!earliest || s < earliest)) earliest = s;
@@ -342,7 +348,7 @@ interface ServiceProfit {
 
 function calcServiceProfits(data: ManageData, mode: CalcMode, now: Date, getSubStartDayFn?: (email: string, fallback: number | null) => number | null, isExtraShareOnFn?: (email: string, svcType: string) => boolean): ServiceProfit[] {
   return data.services.map(svc => {
-    const activeAccounts = svc.accounts.filter(a => (a.usingCount > 0 || a.activeCount > 0) && a.email !== '(직접전달)');
+    const activeAccounts = svc.accounts.filter(a => a.usingCount > 0 && a.email !== '(직접전달)');
     const accountCount = activeAccounts.length;
     const unitCost = getSubscriptionCost(svc.serviceType);
     const baseExtraIncome = EXTRA_INCOME[svc.serviceType] || 0;
@@ -378,7 +384,8 @@ function calcServiceProfits(data: ManageData, mode: CalcMode, now: Date, getSubS
       // 이 계정의 가장 늦은 파티 종료일 확인
       let acctLatestEnd: Date | null = null;
       for (const m of acct.members) {
-        if (['Using', 'UsingNearExpiration'].includes(m.status) && m.endDateTime) {
+        if (!isActualPartyMember(m)) continue;
+        if (m.endDateTime) {
           const ed = parseDate(m.endDateTime);
           if (ed && (!acctLatestEnd || ed > acctLatestEnd)) acctLatestEnd = ed;
         }
@@ -394,6 +401,7 @@ function calcServiceProfits(data: ManageData, mode: CalcMode, now: Date, getSubS
         let acctEarliestStart: Date | null = null;
         let acctLatestEndAll: Date | null = null;
         for (const m of acct.members) {
+          if (!isActualPartyMember(m)) continue;
           const sd = parseDate(m.startDateTime);
           const ed = parseDate(m.endDateTime);
           if (sd && (!acctEarliestStart || sd < acctEarliestStart)) acctEarliestStart = sd;
@@ -1058,7 +1066,7 @@ export default function ProfitPage() {
                         const activeMembers = acct.members.filter(m => ACTIVE_SET.has(m.status));
                         const manualCount = getActiveManualCount(manuals, svc.serviceType, acct.email);
                         const totalUsing = (acct.usingCount || 0) + manualCount;
-                        const filledSlots = totalUsing || acct.activeCount;
+                        const filledSlots = totalUsing;
                         const totalSlots = Math.max(acct.totalSlots, filledSlots, 1);
                         const acctDaily = acct.members.reduce((s, m) => s + calcDailyRate(m), 0);
                         const alias = emailAlias(acct.email);

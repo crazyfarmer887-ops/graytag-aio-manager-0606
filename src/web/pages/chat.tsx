@@ -178,6 +178,14 @@ export default function ChatPage() {
     loadMessages(room.chatRoomUuid, 1);
   };
 
+
+  useEffect(() => {
+    const targetRoom = new URLSearchParams(window.location.search).get('room');
+    if (!targetRoom || rooms.length === 0 || selectedRoom?.chatRoomUuid === targetRoom) return;
+    const room = rooms.find(r => r.chatRoomUuid === targetRoom);
+    if (room) selectRoom(room);
+  }, [rooms, selectedRoom?.chatRoomUuid]);
+
   const markRoomRead = async (room: ChatRoom) => {
     const previous = rooms;
     setRooms(prev => prev.map(r => r.chatRoomUuid === room.chatRoomUuid ? { ...r, lenderChatUnread: false } : r));

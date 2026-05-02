@@ -8,6 +8,7 @@ export interface DashboardMember {
   realizedSum: number;
   progressRatio: string;
   startDateTime: string | null;
+  inflowDateTime?: string | null;
   endDateTime: string | null;
   remainderDays: number;
   source: 'after' | 'before';
@@ -75,10 +76,15 @@ export interface MonthlyNetProfitServiceDetail {
   serviceType: string;
   accountCount: number;
   partyMemberCount: number;
+  maxSlots: number;
   grossIncome: number;
   graytagFee: number;
   subscriptionCost: number;
   netProfit: number;
+  fullPartyGrossIncome: number;
+  fullPartyGraytagFee: number;
+  fullPartyNetProfit: number;
+  fullPartyUpside: number;
 }
 
 export interface MonthlyNetProfitSummary {
@@ -89,6 +95,10 @@ export interface MonthlyNetProfitSummary {
   maintenanceCost: number;
   manualIncome: number;
   netProfit: number;
+  fullPartyGrossIncome: number;
+  fullPartyGraytagFee: number;
+  fullPartyNetProfit: number;
+  fullPartyUpside: number;
   svcDetails: MonthlyNetProfitServiceDetail[];
 }
 
@@ -112,12 +122,15 @@ export interface InflowEntry {
   endDate: string | null;
   price: string;
   source: 'graytag' | 'manual';
+  status?: string;
+  statusName?: string;
 }
 
 export interface DailyInflowRow {
   date: string;
   label: string;
   count: number;
+  byService: Record<string, number>;
   members: InflowEntry[];
 }
 
@@ -141,6 +154,7 @@ const PARTY_MAX: Record<string, number> = {
   '왓챠플레이': 4,
   '티빙': 4,
   '웨이브': 4,
+  '티빙+웨이브': 4,
   '넷플릭스': 5,
 };
 
@@ -159,7 +173,7 @@ const CANCELLED_STATUSES = new Set([
   'CancelByNoShow',
   'CancelByLendingRejection',
 ]);
-const ACTIVE_STATUSES = new Set([
+const NON_EXPIRED_GRAYTAG_STATUSES = new Set([
   'Using',
   'UsingNearExpiration',
   'Delivered',
@@ -169,21 +183,44 @@ const ACTIVE_STATUSES = new Set([
   'Reserved',
   'OnSale',
 ]);
+const ACTUAL_PARTY_STATUSES = new Set([
+  'Using',
+  'UsingNearExpiration',
+  'DeliveredAndCheckPrepaid',
+]);
 
 export function getDashboardPartyMax(serviceType: string): number {
   return PARTY_MAX[serviceType] || 6;
 }
 
-function shouldCountAccount(account: DashboardAccount): boolean {
-  return account.email !== '(직접전달)' && (account.usingCount > 0 || account.activeCount > 0);
+function manualCountForAccount(manuals: DashboardManualMember[], serviceType: string, accountEmail: string): number {
+  return manuals.filter((member) => (
+    member.serviceType === serviceType &&
+    member.accountEmail === accountEmail &&
+    member.status === 'active'
+  )).length;
 }
 
-export function buildServiceStats(data: DashboardData, _manuals: DashboardManualMember[] = []): ServiceStat[] {
+function isAccountCheckingMember(member: Pick<DashboardMember, 'status' | 'statusName'>): boolean {
+  const label = String(member.statusName || '');
+  return member.status === 'DeliveredAndCheckPrepaid' || label.includes('계정확인중') || label.includes('계정 확인중');
+}
+
+function isActualPartyMember(member: Pick<DashboardMember, 'status' | 'statusName'>): boolean {
+  return ACTUAL_PARTY_STATUSES.has(member.status) || isAccountCheckingMember(member);
+}
+
+function shouldCountAccount(account: DashboardAccount, manuals: DashboardManualMember[] = []): boolean {
+  if (account.email === '(직접전달)') return false;
+  return account.usingCount > 0 || manualCountForAccount(manuals, account.serviceType, account.email) > 0;
+}
+
+export function buildServiceStats(data: DashboardData, manuals: DashboardManualMember[] = []): ServiceStat[] {
   return data.services
     .filter((svc) => !EXCLUDED_SERVICES.has(svc.serviceType))
     .map((svc) => {
-      const accounts = svc.accounts.filter(shouldCountAccount);
-      const usingMembers = accounts.reduce((sum, acct) => sum + acct.usingCount, 0);
+      const accounts = svc.accounts.filter((account) => shouldCountAccount(account, manuals));
+      const usingMembers = accounts.reduce((sum, acct) => sum + acct.usingCount + manualCountForAccount(manuals, acct.serviceType, acct.email), 0);
       const maxSlots = accounts.reduce((sum, acct) => sum + getDashboardPartyMax(acct.serviceType), 0);
       return {
         serviceType: svc.serviceType,
@@ -206,7 +243,7 @@ function parseNormalizedDate(value: string | null | undefined): Date | null {
 }
 
 function activeMemberMonthlyGross(member: DashboardMember): number {
-  if (!ACTIVE_STATUSES.has(member.status) || member.purePrice <= 0) return 0;
+  if (!isActualPartyMember(member) || member.purePrice <= 0) return 0;
   const start = parseNormalizedDate(member.startDateTime);
   const end = parseNormalizedDate(member.endDateTime);
   const days = start && end
@@ -215,16 +252,39 @@ function activeMemberMonthlyGross(member: DashboardMember): number {
   return member.purePrice / days * 30;
 }
 
-export function buildMonthlyNetProfitSummary(data: DashboardData | null): MonthlyNetProfitSummary {
+function activeManualMemberMonthlyGross(member: DashboardManualMember, today = new Date().toISOString().slice(0, 10)): number {
+  if (member.status === 'cancelled' || member.price <= 0) return 0;
+  const startIso = normalizeDate(member.startDate);
+  const endIso = normalizeDate(member.endDate);
+  if (!startIso || !endIso) return 0;
+  if (startIso > today || endIso < today) return 0;
+  const start = parseNormalizedDate(startIso);
+  const end = parseNormalizedDate(endIso);
+  const days = start && end
+    ? Math.max(1, Math.ceil((end.getTime() - start.getTime()) / 86400000))
+    : 30;
+  return Math.round(member.price / days * 30);
+}
+
+export function buildMonthlyNetProfitSummary(
+  data: DashboardData | null,
+  manuals: DashboardManualMember[] = [],
+  options: { today?: string } = {},
+): MonthlyNetProfitSummary {
+  const manualIncome = manuals.reduce((sum, member) => sum + activeManualMemberMonthlyGross(member, options.today), 0);
   if (!data) {
     return {
-      totalRevenue: 0,
-      totalGrossIncome: 0,
+      totalRevenue: manualIncome,
+      totalGrossIncome: manualIncome,
       graytagFee: 0,
       subscriptionCost: 0,
       maintenanceCost: 0,
-      manualIncome: 0,
-      netProfit: 0,
+      manualIncome,
+      netProfit: manualIncome,
+      fullPartyGrossIncome: manualIncome,
+      fullPartyGraytagFee: 0,
+      fullPartyNetProfit: manualIncome,
+      fullPartyUpside: 0,
       svcDetails: [],
     };
   }
@@ -233,7 +293,7 @@ export function buildMonthlyNetProfitSummary(data: DashboardData | null): Monthl
 
   for (const svc of data.services) {
     if (EXCLUDED_SERVICES.has(svc.serviceType)) continue;
-    const accounts = svc.accounts.filter(shouldCountAccount);
+    const accounts = svc.accounts.filter((account) => shouldCountAccount(account, manuals));
     if (accounts.length === 0) continue;
 
     const rawGrossIncome = accounts.reduce((sum, account) => (
@@ -244,26 +304,45 @@ export function buildMonthlyNetProfitSummary(data: DashboardData | null): Monthl
     const subscriptionCost = (OTT_MONTHLY_SUBSCRIPTION_COST[svc.serviceType] || 0) * accounts.length;
     const netProfit = Math.round(grossIncome * GRAYTAG_NET_RATE) - subscriptionCost;
     const partyMemberCount = accounts.reduce(
-      (sum, account) => sum + account.members.filter((member) => ACTIVE_STATUSES.has(member.status) && member.purePrice > 0).length,
+      (sum, account) => sum + account.members.filter((member) => isActualPartyMember(member) && member.purePrice > 0).length,
       0,
     );
+    const maxSlots = accounts.reduce((sum, account) => sum + getDashboardPartyMax(account.serviceType), 0);
+    const avgGrossPerMember = partyMemberCount > 0 ? grossIncome / partyMemberCount : 0;
+    const fullPartyGrossIncome = Math.round(avgGrossPerMember * maxSlots);
+    const fullPartyGraytagFee = Math.round(fullPartyGrossIncome * (1 - GRAYTAG_NET_RATE));
+    const fullPartyNetProfit = Math.round(fullPartyGrossIncome * GRAYTAG_NET_RATE) - subscriptionCost;
+    const fullPartyUpside = fullPartyNetProfit - netProfit;
 
     svcDetails.push({
       serviceType: svc.serviceType,
       accountCount: accounts.length,
       partyMemberCount,
+      maxSlots,
       grossIncome,
       graytagFee,
       subscriptionCost,
       netProfit,
+      fullPartyGrossIncome,
+      fullPartyGraytagFee,
+      fullPartyNetProfit,
+      fullPartyUpside,
     });
   }
 
   svcDetails.sort((a, b) => b.netProfit - a.netProfit);
-  const totalGrossIncome = svcDetails.reduce((sum, svc) => sum + svc.grossIncome, 0);
+  const graytagGrossIncome = svcDetails.reduce((sum, svc) => sum + svc.grossIncome, 0);
+  const totalGrossIncome = graytagGrossIncome + manualIncome;
   const graytagFee = svcDetails.reduce((sum, svc) => sum + svc.graytagFee, 0);
   const subscriptionCost = svcDetails.reduce((sum, svc) => sum + svc.subscriptionCost, 0);
-  const netProfit = svcDetails.reduce((sum, svc) => sum + svc.netProfit, 0);
+  const graytagNetProfit = svcDetails.reduce((sum, svc) => sum + svc.netProfit, 0);
+  const netProfit = graytagNetProfit + manualIncome;
+  const fullPartyGraytagGrossIncome = svcDetails.reduce((sum, svc) => sum + svc.fullPartyGrossIncome, 0);
+  const fullPartyGrossIncome = fullPartyGraytagGrossIncome + manualIncome;
+  const fullPartyGraytagFee = svcDetails.reduce((sum, svc) => sum + svc.fullPartyGraytagFee, 0);
+  const fullPartyGraytagNetProfit = svcDetails.reduce((sum, svc) => sum + svc.fullPartyNetProfit, 0);
+  const fullPartyNetProfit = fullPartyGraytagNetProfit + manualIncome;
+  const fullPartyUpside = fullPartyNetProfit - netProfit;
 
   return {
     totalRevenue: netProfit,
@@ -271,8 +350,12 @@ export function buildMonthlyNetProfitSummary(data: DashboardData | null): Monthl
     graytagFee,
     subscriptionCost,
     maintenanceCost: subscriptionCost,
-    manualIncome: 0,
+    manualIncome,
     netProfit,
+    fullPartyGrossIncome,
+    fullPartyGraytagFee,
+    fullPartyNetProfit,
+    fullPartyUpside,
     svcDetails,
   };
 }
@@ -302,18 +385,21 @@ export function buildDailyInflow(
   const baseDate = new Date(`${today}T00:00:00Z`);
   const countMap: Record<string, number> = {};
   const memberMap: Record<string, InflowEntry[]> = {};
+  const byServiceMap: Record<string, Record<string, number>> = {};
 
   const addEntry = (date: string, entry: InflowEntry) => {
     if (!date) return;
     countMap[date] = (countMap[date] || 0) + 1;
     if (!memberMap[date]) memberMap[date] = [];
+    if (!byServiceMap[date]) byServiceMap[date] = {};
     memberMap[date].push(entry);
+    byServiceMap[date][entry.serviceType] = (byServiceMap[date][entry.serviceType] || 0) + 1;
   };
 
   for (const svc of data.services) {
     for (const acct of svc.accounts) {
       for (const member of acct.members) {
-        const iso = normalizeDate(member.startDateTime);
+        const iso = normalizeDate(member.inflowDateTime || member.startDateTime);
         if (!iso) continue;
         addEntry(iso, {
           name: member.name,
@@ -323,6 +409,8 @@ export function buildDailyInflow(
           endDate: normalizeDate(member.endDateTime) || null,
           price: member.price,
           source: 'graytag',
+          status: member.status,
+          statusName: member.statusName,
         });
       }
     }
@@ -349,7 +437,7 @@ export function buildDailyInflow(
     d.setUTCDate(d.getUTCDate() - i);
     const iso = d.toISOString().slice(0, 10);
     const label = `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
-    result.push({ date: iso, label, count: countMap[iso] || 0, members: memberMap[iso] || [] });
+    result.push({ date: iso, label, count: countMap[iso] || 0, byService: byServiceMap[iso] || {}, members: memberMap[iso] || [] });
   }
   return result;
 }
@@ -408,7 +496,7 @@ export function buildPartyMaintenanceTargets(
 }
 
 function isExpiredGraytagMember(member: DashboardMember): boolean {
-  return !ACTIVE_STATUSES.has(member.status) && !CANCELLED_STATUSES.has(member.status) && member.status !== 'Deleted';
+  return !NON_EXPIRED_GRAYTAG_STATUSES.has(member.status) && !CANCELLED_STATUSES.has(member.status) && member.status !== 'Deleted';
 }
 
 function isExpiredManualMember(member: DashboardManualMember, today: string): boolean {
