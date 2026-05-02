@@ -38,6 +38,9 @@ export interface PartyMaintenanceChecklistState {
   subscriptionBillingDay: string;
   subscriptionCancelled: MaintenanceChecklistAnswer;
   partyRestarted: MaintenanceChecklistAnswer;
+  noticeSent: MaintenanceChecklistAnswer;
+  noticeTemplate: string;
+  noticeSentAt: string;
   note: string;
   updatedAt: string;
   updatedBy: string;
@@ -65,6 +68,9 @@ const DEFAULT_STATE = {
   subscriptionBillingDay: '',
   subscriptionCancelled: null,
   partyRestarted: null,
+  noticeSent: null,
+  noticeTemplate: '',
+  noticeSentAt: '',
   note: '',
 };
 
@@ -107,7 +113,7 @@ export function mergePartyMaintenanceChecklistState(
 ): PartyMaintenanceChecklistStore {
   const current = { ...createDefaultPartyMaintenanceChecklistState(key), ...(store[key] || {}), key };
   const next: PartyMaintenanceChecklistState = { ...current, key };
-  for (const field of ['recruitAgain', 'profileRemoved', 'devicesLoggedOut', 'passwordChanged', 'pinStillUnchanged', 'subscriptionKept', 'subscriptionCancelled', 'partyRestarted'] as const) {
+  for (const field of ['recruitAgain', 'profileRemoved', 'devicesLoggedOut', 'passwordChanged', 'pinStillUnchanged', 'subscriptionKept', 'subscriptionCancelled', 'partyRestarted', 'noticeSent'] as const) {
     const value = normalizeNullableBoolean(patch[field]);
     if (value !== undefined) next[field] = value;
   }
@@ -118,7 +124,11 @@ export function mergePartyMaintenanceChecklistState(
   if (generatedPin !== undefined) next.generatedPin = generatedPin;
   if (patch.generatedPinAliasId !== undefined) next.generatedPinAliasId = patch.generatedPinAliasId ?? null;
   if (typeof patch.generatedPinAt === 'string') next.generatedPinAt = patch.generatedPinAt.slice(0, 60);
+  if (typeof patch.noticeTemplate === 'string') next.noticeTemplate = patch.noticeTemplate.slice(0, 2000);
+  if (typeof patch.noticeSentAt === 'string') next.noticeSentAt = patch.noticeSentAt.slice(0, 60);
   if (typeof patch.note === 'string') next.note = patch.note.slice(0, 500);
+  if (patch.noticeSent === true && current.noticeSent !== true) next.noticeSentAt = now;
+  if (patch.noticeSent === false || patch.noticeSent === null) next.noticeSentAt = '';
 
   if (next.recruitAgain === true) {
     next.subscriptionCancelled = null;
@@ -129,6 +139,7 @@ export function mergePartyMaintenanceChecklistState(
       next.generatedPinAliasId = null;
       next.generatedPinAt = '';
     }
+    if (next.noticeSent !== true) next.noticeSentAt = '';
   } else if (next.recruitAgain === false) {
     next.profileRemoved = null;
     next.devicesLoggedOut = null;
@@ -138,6 +149,9 @@ export function mergePartyMaintenanceChecklistState(
     next.generatedPin = '';
     next.generatedPinAliasId = null;
     next.generatedPinAt = '';
+    next.noticeSent = null;
+    next.noticeTemplate = '';
+    next.noticeSentAt = '';
     next.subscriptionKept = null;
     next.subscriptionBillingDay = '';
     next.partyRestarted = null;
@@ -154,7 +168,7 @@ function buildProgress(state: PartyMaintenanceChecklistState): { done: number; t
   let done = state.recruitAgain !== null ? 1 : 0;
   let total = 1;
   if (state.recruitAgain === true) {
-    const required = [state.subscriptionKept, state.profileRemoved, state.devicesLoggedOut, state.passwordChanged, state.pinStillUnchanged];
+    const required = [state.subscriptionKept, state.profileRemoved, state.devicesLoggedOut, state.passwordChanged, state.pinStillUnchanged, state.noticeSent];
     done += required.filter((value) => value !== null).length;
     total += required.length;
     if (state.subscriptionKept === true) {
@@ -187,6 +201,7 @@ function nextActionFor(state: PartyMaintenanceChecklistState): string {
   if (state.passwordChanged === true && !state.changedPassword.trim()) return '변경된 비밀번호 입력';
   if (state.pinStillUnchanged === null) return 'PIN 변경 여부 확인';
   if (state.pinStillUnchanged === true && !state.generatedPin.trim()) return '랜덤 PIN 재생성';
+  if (state.noticeSent !== true) return '남은 파티원 공지';
   if (state.partyRestarted !== true) return '파티 재시작 여부 확인';
   return '파티 재시작 완료';
 }
@@ -206,6 +221,78 @@ export function buildPartyMaintenanceChecklistItems<T extends PartyMaintenanceTa
       nextAction: nextActionFor(state),
     };
   });
+}
+
+
+
+export interface PartyNoticeMemberLike {
+  name?: string | null;
+  dealUsid?: string | null;
+  endDateTime?: string | null;
+  status?: string | null;
+  statusName?: string | null;
+}
+
+export interface PartyNoticeTemplateInput {
+  serviceType: string;
+  accountEmail: string;
+  password?: string;
+  pin?: string;
+  members?: PartyNoticeMemberLike[];
+}
+
+function normalizeNoticeDate(value: string | null | undefined): string {
+  if (!value) return '';
+  const compact = value.match(/^(\d{4})(\d{2})(\d{2})T/);
+  if (compact) return `${compact[1]}-${compact[2]}-${compact[3]}`;
+  const iso = value.match(/(\d{4})[-./\s]+(\d{1,2})[-./\s]+(\d{1,2})/);
+  if (iso) return `${iso[1]}-${iso[2].padStart(2, '0')}-${iso[3].padStart(2, '0')}`;
+  const short = value.replace(/\s/g, '').match(/^(\d{2})\.(\d{1,2})\.(\d{1,2})/);
+  if (short) {
+    const yy = Number(short[1]);
+    const year = yy < 50 ? 2000 + yy : 1900 + yy;
+    return `${year}-${short[2].padStart(2, '0')}-${short[3].padStart(2, '0')}`;
+  }
+  return '';
+}
+
+function isNoticeEligibleMember(member: PartyNoticeMemberLike): boolean {
+  const status = String(member.status || '');
+  const label = String(member.statusName || '');
+  return status === 'Using' || status === 'UsingNearExpiration' || status === 'DeliveredAndCheckPrepaid' || label.includes('계정확인중') || label.includes('계정 확인중');
+}
+
+export function buildPartyNoticeTemplate(input: PartyNoticeTemplateInput): {
+  text: string;
+  remainingMemberNames: string[];
+  excludedMemberNames: string[];
+  excludedDealUsids: string[];
+  earliestEndDate: string;
+} {
+  const eligible = (input.members || []).filter(isNoticeEligibleMember);
+  const endDates = eligible.map((member) => normalizeNoticeDate(member.endDateTime)).filter(Boolean).sort();
+  const earliestEndDate = endDates[0] || '';
+  const shouldExcludeEarliest = Boolean(earliestEndDate && endDates.some((date) => date > earliestEndDate));
+  const excluded = shouldExcludeEarliest ? eligible.filter((member) => normalizeNoticeDate(member.endDateTime) === earliestEndDate) : [];
+  const excludedIds = new Set(excluded.map((member) => String(member.dealUsid || '')).filter(Boolean));
+  const remaining = eligible.filter((member) => !excludedIds.has(String(member.dealUsid || '')));
+  const remainingMemberNames = remaining.map((member) => String(member.name || '(미확인)').trim() || '(미확인)');
+  const excludedMemberNames = excluded.map((member) => String(member.name || '(미확인)').trim() || '(미확인)');
+  const lines = [
+    `안녕하세요. ${input.serviceType} 파티 계정 보안 재정비 안내드립니다.`,
+    '',
+    '파티 이용기간이 먼저 끝나는 분들은 제외하고, 남은 파티원 대상으로 계정 정보가 변경됩니다.',
+    remainingMemberNames.length ? `남은 파티원: ${remainingMemberNames.join(', ')}` : '남은 파티원: 현재 확인된 이용중 파티원 전체',
+    excludedMemberNames.length ? `제외 대상(먼저 종료): ${excludedMemberNames.join(', ')}${earliestEndDate ? ` · ${earliestEndDate}` : ''}` : '',
+    '',
+    '비밀번호가 재설정되었습니다.',
+    input.password ? `새 비밀번호: ${input.password}` : '새 비밀번호: {새 비밀번호}',
+    input.pin ? `이메일 인증 PIN: ${input.pin}` : '이메일 인증 PIN: {PIN 번호}',
+    '',
+    '기존에 로그인되어 있던 기기에서는 다시 로그인해 주세요.',
+    '1인 1기기 1계정 원칙은 그대로 유지됩니다.',
+  ].filter((line) => line !== '');
+  return { text: lines.join('\n'), remainingMemberNames, excludedMemberNames, excludedDealUsids: [...excludedIds], earliestEndDate };
 }
 
 export function splitPartyMaintenanceChecklistItems<T extends PartyMaintenanceTargetLike>(

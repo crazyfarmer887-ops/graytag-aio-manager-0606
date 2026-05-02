@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { buildPartyMaintenanceChecklistItems, generateMaintenancePassword, mergePartyMaintenanceChecklistState, partyMaintenanceChecklistKey, splitPartyMaintenanceChecklistItems } from '../src/lib/party-maintenance-checklist';
+import { buildPartyMaintenanceChecklistItems, buildPartyNoticeTemplate, generateMaintenancePassword, mergePartyMaintenanceChecklistState, partyMaintenanceChecklistKey, splitPartyMaintenanceChecklistItems } from '../src/lib/party-maintenance-checklist';
 
 const targets = [
   {
@@ -15,6 +15,7 @@ const targets = [
     daysUntilExpiry: -8,
     lastMemberName: 'Old',
     memberCount: 1,
+    noticeMembers: [],
   },
 ];
 
@@ -46,6 +47,9 @@ describe('party maintenance checklist', () => {
       subscriptionBillingDay: '',
       subscriptionCancelled: null,
       partyRestarted: null,
+      noticeSent: null,
+      noticeTemplate: '',
+      noticeSentAt: '',
       progress: { done: 0, total: 1 },
       nextAction: '재모집 여부 선택',
     });
@@ -64,6 +68,8 @@ describe('party maintenance checklist', () => {
       pinStillUnchanged: false,
       generatedPin: '123456',
       generatedPinAliasId: 777,
+      noticeSent: true,
+      noticeTemplate: '공지 완료',
       subscriptionCancelled: true,
     }, 'tester');
     const [item] = buildPartyMaintenanceChecklistItems(targets, store);
@@ -73,7 +79,8 @@ describe('party maintenance checklist', () => {
     expect(item.pinStillUnchanged).toBe(false);
     expect(item.generatedPin).toBe('123456');
     expect(item.generatedPinAliasId).toBe(777);
-    expect(item.progress).toEqual({ done: 9, total: 9 });
+    expect(item.noticeSent).toBe(true);
+    expect(item.progress).toEqual({ done: 10, total: 10 });
     expect(item.nextAction).toBe('파티 재시작 여부 확인');
   });
 
@@ -89,7 +96,7 @@ describe('party maintenance checklist', () => {
     }, 'tester');
     const [item] = buildPartyMaintenanceChecklistItems(targets, store);
     expect(item.subscriptionBillingDay).toBe('');
-    expect(item.progress).toEqual({ done: 4, total: 9 });
+    expect(item.progress).toEqual({ done: 4, total: 10 });
     expect(item.nextAction).toBe('구독 결제일 입력');
   });
 
@@ -103,6 +110,8 @@ describe('party maintenance checklist', () => {
       changedPassword: 'stale-password',
       pinStillUnchanged: false,
       generatedPin: '654321',
+      noticeSent: true,
+      noticeTemplate: 'stale notice',
       subscriptionKept: true,
       subscriptionBillingDay: '15',
       subscriptionCancelled: false,
@@ -114,10 +123,57 @@ describe('party maintenance checklist', () => {
     expect(item.changedPassword).toBe('');
     expect(item.pinStillUnchanged).toBeNull();
     expect(item.generatedPin).toBe('');
+    expect(item.noticeSent).toBeNull();
+    expect(item.noticeTemplate).toBe('');
     expect(item.subscriptionKept).toBeNull();
     expect(item.subscriptionBillingDay).toBe('');
     expect(item.progress).toEqual({ done: 2, total: 2 });
     expect(item.nextAction).toBe('구독 해지 여부 확인');
+  });
+
+  test('notice step is incomplete until remaining party members are notified', () => {
+    const key = partyMaintenanceChecklistKey(targets[0]);
+    const readyStore = mergePartyMaintenanceChecklistState({}, key, {
+      recruitAgain: true,
+      subscriptionKept: false,
+      profileRemoved: true,
+      devicesLoggedOut: true,
+      passwordChanged: true,
+      changedPassword: 'new-password-123',
+      pinStillUnchanged: false,
+      generatedPin: '123456',
+      generatedPinAliasId: 777,
+    }, 'tester');
+    const [ready] = buildPartyMaintenanceChecklistItems(targets, readyStore);
+    expect(ready.noticeSent).toBeNull();
+    expect(ready.progress).toEqual({ done: 8, total: 9 });
+    expect(ready.nextAction).toBe('남은 파티원 공지');
+
+    const sentStore = mergePartyMaintenanceChecklistState(readyStore, key, { noticeSent: true }, 'tester', '2026-05-02T00:00:00.000Z');
+    const [sent] = buildPartyMaintenanceChecklistItems(targets, sentStore);
+    expect(sent.noticeSent).toBe(true);
+    expect(sent.noticeSentAt).toBe('2026-05-02T00:00:00.000Z');
+  });
+
+  test('builds copyable notice template and excludes earliest-ending party members', () => {
+    const template = buildPartyNoticeTemplate({
+      serviceType: '넷플릭스',
+      accountEmail: 'netflix1@example.com',
+      password: 'newpass123!@',
+      pin: '456789',
+      members: [
+        { name: '빠른종료', dealUsid: 'd1', endDateTime: '2026-05-03', status: 'Using' },
+        { name: '남은사람', dealUsid: 'd2', endDateTime: '2026-05-20', status: 'Using' },
+        { name: '남은둘', dealUsid: 'd3', endDateTime: '2026-05-21', status: 'UsingNearExpiration' },
+      ],
+    });
+    expect(template.excludedDealUsids).toEqual(['d1']);
+    expect(template.remainingMemberNames).toEqual(['남은사람', '남은둘']);
+    expect(template.text).toContain('비밀번호가 재설정되었습니다');
+    expect(template.text).toContain('새 비밀번호: newpass123!@');
+    expect(template.text).toContain('이메일 인증 PIN: 456789');
+    expect(template.text).toContain('남은 파티원: 남은사람, 남은둘');
+    expect(template.text).not.toContain('빠른종료, 남은사람');
   });
 
   test('keeps recruit-again YES items active until party restart is confirmed', () => {

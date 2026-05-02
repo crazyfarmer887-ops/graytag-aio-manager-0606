@@ -147,6 +147,7 @@ export interface PartyMaintenanceTarget {
   daysUntilExpiry: number | null;
   lastMemberName: string;
   memberCount: number;
+  noticeMembers: Array<{ name: string; dealUsid: string; endDateTime: string | null; status: string; statusName: string }>;
 }
 
 const PARTY_MAX: Record<string, number> = {
@@ -468,6 +469,15 @@ export function buildPartyMaintenanceTargets(
 
       const sortedMembers = [...(acct.members || [])].sort((a, b) => normalizeDate(b.endDateTime).localeCompare(normalizeDate(a.endDateTime)));
       const lastMember = sortedMembers.find((member) => !CANCELLED_STATUSES.has(member.status) && member.status !== 'Deleted');
+      const noticeMembers = (acct.members || [])
+        .filter((member) => isActualPartyMember(member) && !CANCELLED_STATUSES.has(member.status) && member.status !== 'Deleted')
+        .map((member) => ({
+          name: member.name || '(미확인)',
+          dealUsid: String(member.dealUsid || ''),
+          endDateTime: member.endDateTime,
+          status: member.status,
+          statusName: member.statusName || '',
+        }));
       items.push({
         key: `${svc.serviceType}:${acct.email}`,
         serviceType: svc.serviceType,
@@ -481,6 +491,7 @@ export function buildPartyMaintenanceTargets(
         daysUntilExpiry,
         lastMemberName: lastMember?.name || '(미확인)',
         memberCount: acct.members.length,
+        noticeMembers,
       });
     }
   }

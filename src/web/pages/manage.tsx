@@ -5,6 +5,7 @@ import { removeRecruitingProductFromManageData } from "../lib/manage-optimistic"
 import { assertAutoDeliveryInput, buildAutoFillDeliveryMemo, buildFillProductModel, findExactPasswordForAccount, requireExactAliasMemoForAutoFill } from "../../lib/graytag-fill";
 import { generateProfileNickname, generateUniqueProfileNicknames, isValidProfileNickname, normalizeProfileNickname } from "../../lib/profile-nickname";
 import { buildProfileAuditRows, summarizeProfileAudit, type ProfileAuditRow, type ProfileAuditStore } from "../../lib/profile-audit";
+import type { PartyMaintenanceChecklistStore } from "../../lib/party-maintenance-checklist";
 import { RefreshCw, KeyRound, Mail, ChevronDown, ChevronRight, TrendingUp, Loader2, AlertCircle, ExternalLink, Calendar, UserX, Megaphone, PlusCircle, X, UserPlus, Trash2, Activity, Wifi, WifiOff } from "lucide-react";
 
 interface OnSaleProduct {
@@ -377,6 +378,7 @@ export default function ManagePage() {
   const [accountCreateLoading, setAccountCreateLoading] = useState(false);
   const [accountCreateResult, setAccountCreateResult] = useState<string|null>(null);
   const [emailAliases, setEmailAliases] = useState<EmailAlias[]>([]);
+  const [maintenanceChecklistStore, setMaintenanceChecklistStore] = useState<PartyMaintenanceChecklistStore>({});
 
   const fetchEmailAliases = async () => {
     try {
@@ -396,6 +398,25 @@ export default function ManagePage() {
     const emailId = findEmailAliasId(acct);
     if (!emailId) return;
     window.open(`https://email-verify.xyz/email/mail/${emailId}`, '_blank', 'noopener,noreferrer');
+  };
+
+  const fetchMaintenanceChecklists = async () => {
+    try {
+      const res = await fetch('/api/party-maintenance-checklists');
+      if (!res.ok) return;
+      const json = await res.json() as { store?: PartyMaintenanceChecklistStore };
+      setMaintenanceChecklistStore(json.store || {});
+    } catch { setMaintenanceChecklistStore({}); }
+  };
+
+  const findMaintenanceCredentialForAccount = (acct: Account) => {
+    const key = `${acct.serviceType}:${acct.email}`;
+    const state = maintenanceChecklistStore[key];
+    const password = acct.keepPasswd || state?.changedPassword || '';
+    const pin = acct.generatedAccount?.pin || state?.generatedPin || '';
+    const emailId = acct.generatedAccount?.emailId || state?.generatedPinAliasId || findEmailAliasId(acct);
+    if (!password && !pin) return null;
+    return { password, pin, emailId, source: acct.generatedAccount ? 'generated' : 'maintenance' };
   };
 
   const fetchSessionStatus = async () => {
@@ -480,6 +501,7 @@ export default function ManagePage() {
     fetchManualMembers();
     fetchSessionStatus();
     fetchEmailAliases();
+    fetchMaintenanceChecklists();
     // 30초마다 세션 상태 갱신
     const sessionInterval = setInterval(fetchSessionStatus, 30000);
     return () => clearInterval(sessionInterval);
@@ -586,7 +608,7 @@ export default function ManagePage() {
       const res = await fetch('/api/my/management', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
       const json = await res.json() as any;
       if (!res.ok) setError(json.error);
-      else { setData(json); if (json.services?.[0]) setOpenService(json.services[0].serviceType); void fetchEmailAliases(); }
+      else { setData(json); if (json.services?.[0]) setOpenService(json.services[0].serviceType); void fetchEmailAliases(); void fetchMaintenanceChecklists(); }
     } catch (e: any) { setError(e.message); }
     finally { setLoading(false); }
   };
@@ -1152,6 +1174,25 @@ export default function ManagePage() {
 
                             {isAcctOpen && (
                               <div style={{ borderTop:'1px solid #EDE9FE', padding:'8px 14px' }}>
+                                {(() => {
+                                  const credential = findMaintenanceCredentialForAccount(acct);
+                                  if (!credential) return null;
+                                  return (
+                                    <div style={{ background:'#F8FAFC', border:'1.5px solid #CBD5E1', borderRadius:14, padding:12, marginBottom:10 }}>
+                                      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8, marginBottom:8 }}>
+                                        <div>
+                                          <div style={{ fontSize:13, fontWeight:900, color:'#0F172A' }}>관리자 전용 비밀번호·PIN</div>
+                                          <div style={{ fontSize:10, color:'#64748B', marginTop:2 }}>계정 클릭 시에만 표시 · 외부 공유 금지</div>
+                                        </div>
+                                        {credential.emailId && <button onClick={(e) => { e.stopPropagation(); openEmailDashboardForAccount(acct); }} style={{ border:'none', borderRadius:999, padding:'6px 9px', background:'#E0F2FE', color:'#0369A1', fontSize:10, fontWeight:900, cursor:'pointer' }}>이메일 열기</button>}
+                                      </div>
+                                      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:7 }}>
+                                        <div style={{ background:'#fff', borderRadius:10, padding:'8px 9px' }}><div style={{ fontSize:9, color:'#64748B', fontWeight:800 }}>비밀번호</div><div style={{ fontSize:12, color:'#0F172A', fontWeight:900, marginTop:2 }}>{credential.password || '-'}</div></div>
+                                        <div style={{ background:'#fff', borderRadius:10, padding:'8px 9px' }}><div style={{ fontSize:9, color:'#64748B', fontWeight:800 }}>PIN 번호</div><div style={{ fontSize:12, color:'#0F172A', fontWeight:900, marginTop:2 }}>{credential.pin || '-'}</div></div>
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
                                 {acct.generatedAccount && (
                                   <div style={{ background:acct.generatedAccount.paymentStatus==='paid'?'#ECFDF5':'#FFF7ED', border:`1.5px solid ${acct.generatedAccount.paymentStatus==='paid'?'#A7F3D0':'#FED7AA'}`, borderRadius:14, padding:12, marginBottom:10 }}>
                                     <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, marginBottom:8 }}>

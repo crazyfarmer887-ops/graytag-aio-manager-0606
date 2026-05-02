@@ -40,6 +40,14 @@ test('OTT home and navigation use the refreshed UI structure', () => {
   assert.match(home, /랜덤 12자리 비밀번호 생성/);
   assert.match(home, /변경 예정 비밀번호/);
   assert.match(home, /PIN 번호를 변경했는가/);
+  assert.match(home, /공지 했는가/);
+  assert.match(home, /파티 비번 & PIN 알림/);
+  assert.match(home, /남은 파티원 공지 템플릿/);
+  assert.match(home, /복사/);
+  assert.match(home, /전체공지 발송/);
+  assert.match(home, /buildPartyNoticeTemplate/);
+  assert.match(home, /excludeDealUsids/);
+  assert.match(home, /noticeSent/);
   assert.match(home, /변경된 PIN/);
   assert.match(home, /PIN 변경 확인됨/);
   assert.match(home, /이메일 새탭 열기/);
@@ -164,6 +172,11 @@ test('OTT home and navigation use the refreshed UI structure', () => {
   assert.match(manage, /https:\/\/email-verify\.xyz\/email\/mail/);
   assert.doesNotMatch(manage, /summarizeBuyerCancelledDeals/);
   assert.doesNotMatch(manage, /결제했다 취소한 구매자/);
+  assert.match(manage, /관리자 전용 비밀번호·PIN/);
+  assert.match(manage, /maintenanceChecklistStore/);
+  assert.match(manage, /findMaintenanceCredentialForAccount/);
+  assert.match(manage, /credential\.password/);
+  assert.match(manage, /credential\.pin/);
   assert.match(manage, /판매 게시물 없이도 계정 관리에 유지/);
   assert.match(manage, /방금 생성한 계정 삭제/);
   assert.match(manage, /method:'DELETE'/);
@@ -172,6 +185,8 @@ test('OTT home and navigation use the refreshed UI structure', () => {
   assert.match(read('src/api/index.ts'), /createSimpleLoginCustomAlias/);
   assert.doesNotMatch(read('src/api/index.ts'), /graytag-account-generator/);
   assert.match(read('src/api/index.ts'), /nextGeneratedAliasPrefix/);
+  assert.match(read('src/api/index.ts'), /excludeDealUsids/);
+  assert.match(read('src/api/index.ts'), /noticeSent: true/);
   assert.match(read('src/api/index.ts'), /manualPrefix: aliasPrefix/);
   assert.match(read('src/api/index.ts'), /normalizeManualAliasPrefix/);
   assert.match(read('src/api/index.ts'), /api\/v2\/alias\/custom\/new/);

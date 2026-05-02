@@ -5,7 +5,7 @@ import { useLocation } from "wouter";
 import { CATEGORIES } from "../lib/constants";
 import { buildDailyInflow, buildMonthlyNetProfitSummary, buildPartyMaintenanceTargets, buildServiceStats, type PartyMaintenanceTarget } from "../lib/dashboard-stats";
 import { buildLatestChatMessages, type ChatAlertItem, type ChatAlertRoom } from "../lib/chat-alerts";
-import { buildPartyMaintenanceChecklistItems, generateMaintenancePassword, mergePartyMaintenanceChecklistState, splitPartyMaintenanceChecklistItems, type PartyMaintenanceChecklistItem, type PartyMaintenanceChecklistState, type PartyMaintenanceChecklistStore } from "../../lib/party-maintenance-checklist";
+import { buildPartyMaintenanceChecklistItems, buildPartyNoticeTemplate, generateMaintenancePassword, mergePartyMaintenanceChecklistState, splitPartyMaintenanceChecklistItems, type PartyMaintenanceChecklistItem, type PartyMaintenanceChecklistState, type PartyMaintenanceChecklistStore } from "../../lib/party-maintenance-checklist";
 import { RefreshCw, ChevronRight, User, Loader2, TrendingUp, TrendingDown, Wallet, CheckCircle2, RotateCcw, Settings, Zap, ShieldAlert, Bell, MessageCircle } from "lucide-react";
 import { Card, StatCard } from "../components/ui/card";
 import { StatusBadge } from "../components/ui/status-badge";
@@ -438,7 +438,7 @@ function ChecklistRow({ label, value, onChange }: { label: string; value: boolea
   );
 }
 
-function PartyMaintenancePanel({ items, regeneratingPinKey, onUpdate, onRegeneratePin, onGoManage, onGoWrite }: { items: PartyMaintenanceChecklistItem<PartyMaintenanceTarget>[]; regeneratingPinKey: string | null; onUpdate: (key: string, patch: Partial<PartyMaintenanceChecklistState>) => void; onRegeneratePin: (item: PartyMaintenanceChecklistItem<PartyMaintenanceTarget>) => void; onGoManage: () => void; onGoWrite: () => void }) {
+function PartyMaintenancePanel({ items, regeneratingPinKey, sendingNoticeKey, onUpdate, onRegeneratePin, onSendNotice, onGoManage, onGoWrite }: { items: PartyMaintenanceChecklistItem<PartyMaintenanceTarget>[]; regeneratingPinKey: string | null; sendingNoticeKey: string | null; onUpdate: (key: string, patch: Partial<PartyMaintenanceChecklistState>) => void; onRegeneratePin: (item: PartyMaintenanceChecklistItem<PartyMaintenanceTarget>) => void; onSendNotice: (item: PartyMaintenanceChecklistItem<PartyMaintenanceTarget>, message: string, excludeDealUsids: string[]) => void; onGoManage: () => void; onGoWrite: () => void }) {
   const { active, completed } = splitPartyMaintenanceChecklistItems(items);
   const [tab, setTab] = useState<'active' | 'completed'>('active');
   if (items.length === 0) return null;
@@ -564,6 +564,25 @@ function PartyMaintenancePanel({ items, regeneratingPinKey, onUpdate, onRegenera
                           </span>
                         </div>
                       </div>
+                      {(() => {
+                        const notice = buildPartyNoticeTemplate({ serviceType: item.target.serviceType, accountEmail: item.target.accountEmail, password: item.changedPassword, pin: item.generatedPin, members: item.target.noticeMembers });
+                        const noticeText = item.noticeTemplate || notice.text;
+                        return (
+                          <div style={{ background: '#F0F9FF', border: '1px solid #BAE6FD', borderRadius: 9, padding: '7px 8px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                              <span style={{ fontSize: 10, color: '#0369A1', fontWeight: 900 }}>파티 비번 & PIN 알림</span>
+                              <span style={{ fontSize: 9, color: '#0284C7', fontWeight: 900 }}>먼저 끝나는 파티원 {notice.excludedMemberNames.length}명 제외</span>
+                            </div>
+                            <div style={{ fontSize: 10, color: '#075985', fontWeight: 800, marginBottom: 5 }}>남은 파티원 공지 템플릿</div>
+                            <textarea value={noticeText} onChange={(event) => onUpdate(item.key, { noticeTemplate: event.target.value, noticeSent: false })} rows={7} style={{ width: '100%', boxSizing: 'border-box', border: '1px solid #BAE6FD', borderRadius: 8, padding: '7px 8px', fontSize: 10, lineHeight: 1.45, color: '#0C4A6E', fontFamily: 'inherit', resize: 'vertical', background: '#fff' }} />
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginTop: 6 }}>
+                              <button onClick={() => navigator.clipboard?.writeText(noticeText)} style={{ border: 'none', borderRadius: 8, padding: '7px 8px', background: '#E0F2FE', color: '#0369A1', fontSize: 10, fontWeight: 900, cursor: 'pointer', fontFamily: 'inherit' }}>복사</button>
+                              <button onClick={() => onSendNotice(item, noticeText, notice.excludedDealUsids)} disabled={sendingNoticeKey === item.key || !noticeText.trim()} style={{ border: 'none', borderRadius: 8, padding: '7px 8px', background: '#0284C7', color: '#fff', fontSize: 10, fontWeight: 900, cursor: sendingNoticeKey === item.key ? 'not-allowed' : 'pointer', fontFamily: 'inherit', opacity: sendingNoticeKey === item.key ? 0.65 : 1 }}>{sendingNoticeKey === item.key ? '발송중...' : '전체공지 발송'}</button>
+                            </div>
+                            <ChecklistRow label="공지 했는가" value={item.noticeSent} onChange={(value) => onUpdate(item.key, { noticeSent: value, noticeTemplate: noticeText })} />
+                          </div>
+                        );
+                      })()}
                       <ChecklistRow label="파티 재시작 했는가" value={item.partyRestarted} onChange={(value) => onUpdate(item.key, { partyRestarted: value })} />
                     </div>
                   )}
@@ -735,6 +754,7 @@ export default function HomePage() {
   const [operationsCenterLoading, setOperationsCenterLoading] = useState(false);
   const [partyMaintenanceChecklistStore, setPartyMaintenanceChecklistStore] = useState<PartyMaintenanceChecklistStore>({});
   const [regeneratingPinKey, setRegeneratingPinKey] = useState<string | null>(null);
+  const [sendingNoticeKey, setSendingNoticeKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [, navigate] = useLocation();
@@ -805,6 +825,29 @@ export default function HomePage() {
       await fetchPartyMaintenanceChecklists();
     } finally {
       setRegeneratingPinKey(null);
+    }
+  };
+
+  const sendPartyMaintenanceNotice = async (item: PartyMaintenanceChecklistItem<PartyMaintenanceTarget>, message: string, excludeDealUsids: string[]) => {
+    if (sendingNoticeKey) return;
+    if (!window.confirm(`${item.target.accountEmail} 남은 파티원에게 전체공지 발송할까요?`)) return;
+    setSendingNoticeKey(item.key);
+    try {
+      const res = await fetch('/api/chat/notice/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetEmail: item.target.accountEmail, message, excludeDealUsids, checklistKey: item.key }),
+      });
+      const json = await res.json() as { ok?: boolean; error?: string; sent?: number; failed?: number; store?: PartyMaintenanceChecklistStore };
+      if (!res.ok || !json.ok) throw new Error(json.error || '공지 발송 실패');
+      if (json.store) setPartyMaintenanceChecklistStore(json.store);
+      else await updatePartyMaintenanceChecklist(item.key, { noticeSent: true, noticeTemplate: message });
+      window.alert(`공지 발송 완료: ${json.sent || 0}건 / 실패 ${json.failed || 0}건`);
+    } catch (e: any) {
+      window.alert(e.message || '공지 발송 실패');
+      await fetchPartyMaintenanceChecklists();
+    } finally {
+      setSendingNoticeKey(null);
     }
   };
 
@@ -1154,8 +1197,10 @@ export default function HomePage() {
           <PartyMaintenancePanel
             items={partyMaintenanceChecklistItems}
             regeneratingPinKey={regeneratingPinKey}
+            sendingNoticeKey={sendingNoticeKey}
             onUpdate={updatePartyMaintenanceChecklist}
             onRegeneratePin={regeneratePartyMaintenancePin}
+            onSendNotice={sendPartyMaintenanceNotice}
             onGoManage={() => navigate('/manage')}
             onGoWrite={() => navigate('/write')}
           />

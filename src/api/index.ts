@@ -107,6 +107,7 @@ const SAFE_MODE_RISKY_PATHS = new Set([
   '/auto-undercutter/state',
   '/auto-sync-prices',
   '/chat/send',
+  '/chat/notice/send',
   '/post/create',
   '/post/keepAcct',
   '/bulk-update-keepmemo',
@@ -3690,10 +3691,12 @@ app.post("/chat/auto-reply/prompt", async (c) => {
 // POST /chat/notice/send
 app.post("/chat/notice/send", async (c) => {
   const body = await c.req.json() as any;
-  const { targetEmail, message, statusFilter } = body as {
+  const { targetEmail, message, statusFilter, excludeDealUsids, checklistKey } = body as {
     targetEmail: string;
     message: string;
     statusFilter?: string[];
+    excludeDealUsids?: string[];
+    checklistKey?: string;
   };
 
   if (!targetEmail) return c.json({ error: "targetEmail 필수" }, 400);
@@ -3730,12 +3733,13 @@ app.post("/chat/notice/send", async (c) => {
     }
 
     const tEmail = targetEmail.trim().toLowerCase();
+    const excludedDealIds = new Set((Array.isArray(excludeDealUsids) ? excludeDealUsids : []).map(String).filter(Boolean));
     const targetDeals = rooms.filter((r: any) =>
-      (r.keepAcct||"").trim().toLowerCase()===tEmail && allowedStatuses.has(r.dealStatus) && r.chatRoomUuid
+      (r.keepAcct||"").trim().toLowerCase()===tEmail && allowedStatuses.has(r.dealStatus) && r.chatRoomUuid && !excludedDealIds.has(String(r.dealUsid || ''))
     );
 
     if (targetDeals.length === 0) {
-      return c.json({ ok: true, sent: 0, failed: 0, skipped: 0, details: [], message: "대상 파티원 없음" });
+      return c.json({ ok: true, sent: 0, failed: 0, skipped: 0, excluded: excludedDealIds.size, details: [], message: "대상 파티원 없음" });
     }
 
     // 3. 각 파티원에게 발송
@@ -3775,7 +3779,13 @@ app.post("/chat/notice/send", async (c) => {
       await new Promise(res => setTimeout(res, 300));
     }
 
-    return c.json({ ok: true, sent, failed, skipped, total: targetDeals.length, details });
+    let store: PartyMaintenanceChecklistStore | undefined;
+    if (checklistKey && sent > 0 && failed === 0) {
+      store = mergePartyMaintenanceChecklistState(loadPartyMaintenanceChecklistStore(), checklistKey, { noticeSent: true, noticeTemplate: message }, 'dashboard');
+      savePartyMaintenanceChecklistStore(store);
+    }
+
+    return c.json({ ok: true, sent, failed, skipped, excluded: excludedDealIds.size, total: targetDeals.length, details, store });
   } catch (e: any) {
     return c.json({ ok: false, error: e.message }, 500);
   }
