@@ -4,10 +4,9 @@ import { buildAccountSlotStates, dedupeRecruitingProducts, mergeRecruitingProduc
 import { removeRecruitingProductFromManageData } from "../lib/manage-optimistic";
 import { assertAutoDeliveryInput, buildAutoFillDeliveryMemo, buildFillProductModel, findExactPasswordForAccount, requireExactAliasMemoForAutoFill } from "../../lib/graytag-fill";
 import { generateProfileNickname, generateUniqueProfileNicknames, isValidProfileNickname, normalizeProfileNickname } from "../../lib/profile-nickname";
-import { buildProfileAuditRows, summarizeProfileAudit, type ProfileAuditRow, type ProfileAuditStore } from "../../lib/profile-audit";
 import type { PartyMaintenanceChecklistStore } from "../../lib/party-maintenance-checklist";
 import { getGeneratedAccountCreationCopy } from "../../lib/generated-accounts";
-import { RefreshCw, KeyRound, Mail, ChevronDown, ChevronRight, TrendingUp, Loader2, AlertCircle, ExternalLink, Calendar, UserX, Megaphone, PlusCircle, X, UserPlus, Trash2, Activity, Wifi, WifiOff } from "lucide-react";
+import { RefreshCw, KeyRound, Mail, ChevronDown, ChevronRight, TrendingUp, Loader2, AlertCircle, ExternalLink, Calendar, UserX, Megaphone, PlusCircle, X, UserPlus, Trash2, Wifi, WifiOff } from "lucide-react";
 
 interface OnSaleProduct {
   productUsid: string; productName: string; productType: string;
@@ -179,161 +178,6 @@ function ManualResponseQueuePanel() {
   );
 }
 
-interface ProfileAuditProgress {
-  status: 'idle' | 'running' | 'completed' | 'failed';
-  total: number;
-  completed: number;
-  percent: number;
-  currentServiceType: string | null;
-  currentAccountEmail: string | null;
-  message: string;
-}
-
-function ProfileAuditPanel({ data, manualMembers }: { data: ManageData; manualMembers: ManualMember[] }) {
-  const [rows, setRows] = useState<ProfileAuditRow[]>(() => buildProfileAuditRows(data as any, manualMembers as any, {}));
-  const [loading, setLoading] = useState(false);
-  const [running, setRunning] = useState(false);
-  const [progress, setProgress] = useState<ProfileAuditProgress | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const refreshRows = async () => {
-    setLoading(true); setError(null);
-    try {
-      const res = await fetch('/api/profile-audit/results');
-      const json = await res.json() as { results?: ProfileAuditStore; progress?: ProfileAuditProgress; error?: string };
-      if (!res.ok) throw new Error(json.error || '프로필 검증 결과 조회 실패');
-      setProgress(json.progress || null);
-      setRows(buildProfileAuditRows(data as any, manualMembers as any, json.results || {}));
-    } catch (e: any) {
-      setError(e.message || '프로필 검증 결과 조회 실패');
-      setRows(buildProfileAuditRows(data as any, manualMembers as any, {}));
-    } finally { setLoading(false); }
-  };
-
-  useEffect(() => { refreshRows(); }, [data, manualMembers]);
-
-  useEffect(() => {
-    if (!running) return;
-    let cancelled = false;
-    const loadProgress = async () => {
-      try {
-        const res = await fetch('/api/profile-audit/progress');
-        const json = await res.json() as { progress?: ProfileAuditProgress };
-        if (!cancelled && json.progress) setProgress(json.progress);
-      } catch { /* progress polling is best-effort */ }
-    };
-    loadProgress();
-    const timer = window.setInterval(loadProgress, 1200);
-    return () => { cancelled = true; window.clearInterval(timer); };
-  }, [running]);
-
-  const runCheck = async () => {
-    const targetRows = rows.filter(row => row.status === 'unchecked' || row.status === 'mismatch' || row.status === 'error').slice(0, 20);
-    const rowsWithSecrets = targetRows.map(row => {
-      const account = data.services
-        .flatMap(service => service.accounts)
-        .find(account => account.serviceType === row.serviceType && account.email === row.accountEmail);
-      return row.serviceType === '넷플릭스' ? { ...row, keepPasswd: account?.keepPasswd || '' } : row;
-    });
-    if (targetRows.length === 0) return;
-    setProgress({
-      status: 'running', total: targetRows.length, completed: 0, percent: 0,
-      currentServiceType: null, currentAccountEmail: null, message: '프로필 검증을 시작했어요.',
-    });
-    setRunning(true); setError(null);
-    try {
-      const res = await fetch('/api/profile-audit/run', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rows: rowsWithSecrets }),
-      });
-      const json = await res.json() as { results?: ProfileAuditStore; progress?: ProfileAuditProgress; error?: string };
-      if (json.progress) setProgress(json.progress);
-      if (!res.ok) throw new Error(json.error || '프로필 검증 실행 실패');
-      setRows(buildProfileAuditRows(data as any, manualMembers as any, json.results || {}));
-    } catch (e: any) {
-      setError(e.message || '프로필 검증 실행 실패');
-    } finally { setRunning(false); }
-  };
-
-  const summary = summarizeProfileAudit(rows);
-  const activeProgress = progress && (running || progress.status === 'running' || progress.status === 'completed' || progress.status === 'failed');
-  const progressPercent = Math.max(0, Math.min(100, Math.round(progress?.percent ?? 0)));
-  const progressLabel = progress ? `${progress.completed}/${progress.total} · ${progressPercent}%` : '0/0 · 0%';
-  const tone = summary.mismatch > 0 ? '#EF4444' : summary.match > 0 ? '#10B981' : '#A78BFA';
-  const statusLabel = (row: ProfileAuditRow) => row.status === 'match' ? '일치'
-    : row.status === 'mismatch' ? '불일치'
-    : row.status === 'unsupported' ? '미지원'
-    : row.status === 'error' ? '오류'
-    : '미검증';
-  const statusColor = (row: ProfileAuditRow) => row.status === 'match' ? '#059669'
-    : row.status === 'mismatch' ? '#EF4444'
-    : row.status === 'unsupported' ? '#9CA3AF'
-    : row.status === 'error' ? '#DC2626'
-    : '#7C3AED';
-
-  return (
-    <div style={{ background:'#fff', borderRadius:18, padding:14, marginBottom:14, boxShadow:'0 2px 12px rgba(167,139,250,0.08)', border:'1.5px solid #F3F0FF' }}>
-      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, marginBottom:10 }}>
-        <div>
-          <div style={{ display:'flex', alignItems:'center', gap:6, fontSize:14, fontWeight:800, color:'#1E1B4B' }}>
-            <Activity size={15} color={tone} /> 프로필 수 검증
-          </div>
-          <div style={{ fontSize:11, color:'#9CA3AF', marginTop:3 }}>실제 OTT 프로필 수와 계정관리 파티원 수 비교</div>
-        </div>
-        <button onClick={runCheck} disabled={running || loading || rows.length === 0}
-          style={{ border:'none', borderRadius:12, padding:'8px 11px', background:'#EDE9FE', color:'#7C3AED', fontSize:11, fontWeight:800, cursor:running?'not-allowed':'pointer', display:'flex', alignItems:'center', gap:5 }}>
-          {running ? <Loader2 size={13} style={{ animation:'spin 1s linear infinite' }} /> : <RefreshCw size={13} />}
-          {running ? '검증중' : '검증 시작'}
-        </button>
-      </div>
-
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:6, marginBottom:10, textAlign:'center' }}>
-        {[
-          ['전체', summary.total, '#6B7280'], ['일치', summary.match, '#059669'], ['불일치', summary.mismatch, '#EF4444'], ['미검증', summary.unchecked + summary.unsupported, '#7C3AED'],
-        ].map(([label, value, color]) => (
-          <div key={String(label)} style={{ background:'#F8F6FF', borderRadius:10, padding:'7px 4px' }}>
-            <div style={{ fontSize:14, fontWeight:900, color: String(color) }}>{String(value)}</div>
-            <div style={{ fontSize:9, color:'#9CA3AF', marginTop:2 }}>{String(label)}</div>
-          </div>
-        ))}
-      </div>
-      {activeProgress && <div style={{ background:'#F8F6FF', border:'1px solid #EDE9FE', borderRadius:12, padding:'9px 10px', marginBottom:10 }}>
-        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:8, marginBottom:6 }}>
-          <div style={{ fontSize:11, fontWeight:900, color:'#1E1B4B' }}>검증 진척도</div>
-          <div style={{ fontSize:11, fontWeight:900, color:progress?.status === 'failed' ? '#EF4444' : '#7C3AED' }}>{progressLabel}</div>
-        </div>
-        <div style={{ height:8, borderRadius:999, background:'#EDE9FE', overflow:'hidden' }}>
-          <div style={{ width:`${progressPercent}%`, height:'100%', borderRadius:999, background:progress?.status === 'failed' ? '#EF4444' : 'linear-gradient(90deg,#A78BFA,#7C3AED)', transition:'width .25s ease' }} />
-        </div>
-        <div style={{ fontSize:10, color:'#7C3AED', marginTop:6, lineHeight:1.35 }}>
-          {progress?.message || '프로필 검증 상태를 확인하는 중이에요.'}
-          {progress?.currentAccountEmail && <span style={{ color:'#9CA3AF' }}> · {progress.currentServiceType} {progress.currentAccountEmail}</span>}
-        </div>
-      </div>}
-      {error && <div style={{ background:'#FFF0F0', color:'#EF4444', borderRadius:10, padding:'8px 10px', fontSize:11, marginBottom:8 }}>{error}</div>}
-      <div style={{ display:'flex', flexDirection:'column', gap:7, maxHeight:260, overflowY:'auto' }}>
-        {rows.slice(0, 12).map(row => (
-          <div key={row.id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, background:'#FAFAFF', border:'1px solid #F3F0FF', borderRadius:12, padding:'9px 10px' }}>
-            <div style={{ minWidth:0 }}>
-              <div style={{ display:'flex', alignItems:'center', gap:6, flexWrap:'wrap' }}>
-                <span style={{ fontSize:12, fontWeight:800, color:'#1E1B4B' }}>{row.serviceType}</span>
-                <span style={{ fontSize:10, fontWeight:800, color:statusColor(row), background:'#fff', borderRadius:999, padding:'2px 7px' }}>{statusLabel(row)}</span>
-              </div>
-              <div style={{ fontSize:10, color:'#9CA3AF', marginTop:3, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{row.accountEmail}</div>
-              {row.message && <div style={{ fontSize:9, color:'#C084FC', marginTop:3 }}>{row.message}</div>}
-            </div>
-            <div style={{ textAlign:'right', flexShrink:0 }}>
-              <div style={{ fontSize:12, fontWeight:900, color:'#1E1B4B' }}>{row.actualProfileCount ?? '-'} / {row.expectedPartyCount}</div>
-              <div style={{ fontSize:9, color:'#9CA3AF', marginTop:2 }}>실제 / 관리</div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 export default function ManagePage() {
   const cookies = loadCookies();
   const [selectedId, setSelectedId] = useState(cookies[0]?.id||'');
@@ -385,6 +229,8 @@ export default function ManagePage() {
   const accountCreateCopy = getGeneratedAccountCreationCopy(accountCreateService);
   const [emailAliases, setEmailAliases] = useState<EmailAlias[]>([]);
   const [maintenanceChecklistStore, setMaintenanceChecklistStore] = useState<PartyMaintenanceChecklistStore>({});
+  const [pinResetLoadingKey, setPinResetLoadingKey] = useState<string | null>(null);
+  const [pinResetNoticeKey, setPinResetNoticeKey] = useState<string | null>(null);
 
   const fetchEmailAliases = async () => {
     try {
@@ -419,10 +265,35 @@ export default function ManagePage() {
     const key = `${acct.serviceType}:${acct.email}`;
     const state = maintenanceChecklistStore[key];
     const password = acct.keepPasswd || state?.changedPassword || '';
-    const pin = acct.generatedAccount?.pin || state?.generatedPin || '';
-    const emailId = acct.generatedAccount?.emailId || state?.generatedPinAliasId || findEmailAliasId(acct);
+    const pin = state?.generatedPin || acct.generatedAccount?.pin || '';
+    const emailId = state?.generatedPinAliasId || acct.generatedAccount?.emailId || findEmailAliasId(acct);
     if (!password && !pin) return null;
     return { password, pin, emailId, source: acct.generatedAccount ? 'generated' : 'maintenance' };
+  };
+
+  const copyText = async (value: string) => {
+    if (!value) return;
+    try { await navigator.clipboard?.writeText(value); } catch { /* 복사는 브라우저 권한에 따름 */ }
+  };
+
+  const handleRegeneratePin = async (acct: Account) => {
+    const key = `${acct.serviceType}:${acct.email}`;
+    setPinResetLoadingKey(key);
+    try {
+      const res = await fetch(`/api/party-maintenance-checklists/${encodeURIComponent(key)}/pin/regenerate`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountEmail: acct.email, serviceType: acct.serviceType }),
+      });
+      const json = await res.json() as any;
+      if (!res.ok || !json.ok) throw new Error(json.error || 'PIN 번호 재설정 실패');
+      setMaintenanceChecklistStore(json.store || { ...maintenanceChecklistStore, [key]: json.item });
+      setPinResetNoticeKey(key);
+      await doFetch(undefined, true);
+    } catch (e: any) {
+      alert(e.message || 'PIN 번호 재설정 실패');
+    } finally {
+      setPinResetLoadingKey(null);
+    }
   };
 
   const fetchSessionStatus = async () => {
@@ -453,7 +324,7 @@ export default function ManagePage() {
       if (!res.ok || !json.account) throw new Error(json.error || '계정 생성 실패');
       setAccountCreateResult(`${json.account.email} 생성 완료 · 계정 관리에 표시됨 · 결제 체크 대기`);
       setAccountCreatePrefix('');
-      await doFetch();
+      await doFetch(undefined, true);
     } catch (e: any) { setAccountCreateResult(`오류: ${e.message}`); }
     finally { setAccountCreateLoading(false); }
   };
@@ -475,7 +346,7 @@ export default function ManagePage() {
         method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ paymentStatus: paid ? 'paid' : 'pending' }),
       });
       if (!res.ok) throw new Error('결제 체크 저장 실패');
-      await doFetch();
+      await doFetch(undefined, true);
     } catch (e: any) {
       setAccountCreateResult(`오류: ${e.message}`);
       setData(prev => prev ? {
@@ -498,7 +369,7 @@ export default function ManagePage() {
       const json = await res.json().catch(() => ({})) as any;
       if (!res.ok) throw new Error(json.error || '생성 계정 삭제 실패');
       setAccountCreateResult(`${acct.email} 삭제 완료`);
-      await doFetch();
+      await doFetch(undefined, true);
     } catch (e: any) {
       setAccountCreateResult(`오류: ${e.message}`);
     }
@@ -606,12 +477,12 @@ export default function ManagePage() {
   };
   const [fillRankLoading, setFillRankLoading] = useState(false);
 
-  const doFetch = async (id?: string) => {
+  const doFetch = async (id?: string, forceRefresh = false) => {
     const cs = cookies.find(c => c.id===(id||selectedId));
     if (!cs) return;
     setLoading(true); setError(null); setData(null);
     try {
-      const body = cs.id === AUTO_COOKIE_ID ? {} : { AWSALB:cs.AWSALB, AWSALBCORS:cs.AWSALBCORS, JSESSIONID:cs.JSESSIONID };
+      const body = cs.id === AUTO_COOKIE_ID ? (forceRefresh ? { forceRefresh: true } : {}) : { AWSALB:cs.AWSALB, AWSALBCORS:cs.AWSALBCORS, JSESSIONID:cs.JSESSIONID };
       const res = await fetch('/api/my/management', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
       const json = await res.json() as any;
       if (!res.ok) setError(json.error);
@@ -788,7 +659,7 @@ export default function ManagePage() {
         };
       });
     }
-    if (success > 0) setTimeout(() => { setFillModal(null); setFillResult(null); doFetch(); }, 3000);
+    if (success > 0) setTimeout(() => { setFillModal(null); setFillResult(null); doFetch(undefined, true); }, 3000);
   };
 
 
@@ -814,6 +685,10 @@ export default function ManagePage() {
   const tomorrow = () => { const d = new Date(); d.setDate(d.getDate()+1); return d.toISOString().split('T')[0]; };
 
   // 자동 쿠키가 항상 있으므로 빈 상태 가드 제거됨
+
+  const isActiveManualMember = (m: ManualMember) => m.status === 'active';
+  const serviceManualUsingCount = (svc: ServiceGroup) => svc.accounts.reduce((total, acct) => total + getManualForAccount(acct.email, acct.serviceType).filter(isActiveManualMember).length, 0);
+  const totalManualUsingCount = data?.services.reduce((total, svc) => total + serviceManualUsingCount(svc), 0) ?? 0;
 
   const sum = data?.summary;
   const actualTotalAccounts = data?.services.reduce((total, svc) => total + svc.accounts.filter((acct) => (
@@ -841,11 +716,8 @@ export default function ManagePage() {
             for (const svc of data.services) {
               for (const acct of svc.accounts) {
                 if (acct.email === '(직접전달)') continue;
-                const mx = getPartyMax(acct.serviceType);
-                const vac = Math.max(0, mx - acct.usingCount);
-                const onSale = dedupeRecruitingProducts(data.onSaleByKeepAcct?.[acct.email] || [])
-                  .filter(p => !p.productType || p.productType === acct.serviceType).length;
-                totalUnfilled += Math.max(0, vac - onSale);
+                const vi = getVacancyInfo(acct);
+                totalUnfilled += vi.unfilled;
               }
             }
             if (totalUnfilled === 0) return null;
@@ -947,7 +819,7 @@ export default function ManagePage() {
             <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:6, textAlign:'center' }}>
               {[
                 { label:'계정 수', value:`${actualTotalAccounts}개` },
-                { label:'이용 중', value:`${sum!.totalUsingMembers}명` },
+                { label:'이용 중', value:`${sum!.totalUsingMembers + totalManualUsingCount}명` },
                 { label:'현재 수입', value:fmtMoney(sum!.totalIncome) },
                 { label:'정산 완료', value:fmtMoney(sum!.totalRealized) },
               ].map(item => (
@@ -993,7 +865,6 @@ export default function ManagePage() {
           </div>
 
           <ManualResponseQueuePanel />
-          <ProfileAuditPanel data={data} manualMembers={manualMembers} />
 
           {/* 필터 */}
           <div style={{ display:'flex', gap:6, marginBottom:14 }}>
@@ -1013,6 +884,7 @@ export default function ManagePage() {
               const logo = svcLogo(svc.serviceType);
               const isOpen = openService === svc.serviceType;
               const serviceVerifyingCount = svc.accounts.reduce((sum, acct) => sum + acct.members.filter(isAccountCheckingMember).length, 0);
+              const serviceUsingWithManual = svc.totalUsingMembers + serviceManualUsingCount(svc);
               const actualPartyAccountCount = svc.accounts.filter((acct) => (
                 acct.email !== '(직접전달)' &&
                 (acct.usingCount > 0 || getManualForAccount(acct.email, acct.serviceType).some((m) => m.status === 'active') || acct.generatedAccount?.paymentStatus === 'paid')
@@ -1025,7 +897,7 @@ export default function ManagePage() {
                     </div>
                     <div style={{ flex:1, textAlign:'left' }}>
                       <div style={{ fontSize:15, fontWeight:700, color:'#1E1B4B' }}>{svc.serviceType}</div>
-                      <div style={{ fontSize:11, color:'#9CA3AF', marginTop:2 }}>계정 {actualPartyAccountCount}개 · 이용중 {svc.totalUsingMembers}명{serviceVerifyingCount > 0 ? ` · 확인중 ${serviceVerifyingCount}명` : ''}</div>
+                      <div style={{ fontSize:11, color:'#9CA3AF', marginTop:2 }}>계정 {actualPartyAccountCount}개 · 이용중 {serviceUsingWithManual}명{serviceManualUsingCount(svc) > 0 ? ` (수동 포함 +${serviceManualUsingCount(svc)})` : ''}{serviceVerifyingCount > 0 ? ` · 확인중 ${serviceVerifyingCount}명` : ''}</div>
                     </div>
                     <div style={{ textAlign:'right', flexShrink:0 }}>
                       <div style={{ fontSize:14, fontWeight:700, color:'#A78BFA' }}>{fmtMoney(svc.totalIncome)}</div>
@@ -1059,6 +931,13 @@ export default function ManagePage() {
                         const partyInfo = calcPartyDuration(acct.members);
                         const verifyingCount = acct.members.filter(isAccountCheckingMember).length;
                         const emailAliasId = findEmailAliasId(acct);
+                        const credential = findMaintenanceCredentialForAccount(acct);
+                        const credentialKey = `${acct.serviceType}:${acct.email}`;
+                        const credentialRows = [
+                          { label: 'ID', value: acct.email },
+                          { label: 'PW', value: credential?.password || acct.keepPasswd || '' },
+                          { label: 'PIN', value: credential?.pin || '' },
+                        ];
                         const slotStates = buildAccountSlotStates({
                           totalSlots,
                           usingCount: acct.usingCount,
@@ -1151,7 +1030,7 @@ export default function ManagePage() {
                                           if (json.successCount && json.successCount > 0) {
                                             setData(prev => prev ? removeRecruitingProductFromManageData(prev, acct.email, p.productUsid) as ManageData : prev);
                                             // 서버 반영을 기다리지 않고 즉시 UI에서 제거하고, 백그라운드로 최신 상태를 맞춘다.
-                                            void doFetch();
+                                            void doFetch(undefined, true);
                                           } else {
                                             const errMsg = json.results?.[0]?.error || json.error || '알 수 없는 오류';
                                             alert('삭제 실패:\n' + errMsg);
@@ -1185,6 +1064,40 @@ export default function ManagePage() {
 
                             {isAcctOpen && (
                               <div style={{ borderTop:'1px solid #EDE9FE', padding:'8px 14px' }}>
+
+                                <div style={{ background:'#FFFFFF', border:'1.5px solid #EDE9FE', borderRadius:14, padding:12, marginBottom:10 }}>
+                                  <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8, marginBottom:8 }}>
+                                    <div>
+                                      <div style={{ fontSize:13, fontWeight:900, color:'#1E1B4B' }}>관리자 전용 ID · PW · PIN</div>
+                                      <div style={{ fontSize:10, color:'#9CA3AF', marginTop:2 }}>계정 클릭 시에만 표시 · 복붙용</div>
+                                    </div>
+                                    <button onClick={(e) => { e.stopPropagation(); handleRegeneratePin(acct); }} disabled={pinResetLoadingKey === credentialKey}
+                                      style={{ border:'none', borderRadius:999, padding:'7px 10px', background:pinResetLoadingKey === credentialKey ? '#C4B5FD' : '#7C3AED', color:'#fff', fontSize:11, fontWeight:900, cursor:pinResetLoadingKey === credentialKey ? 'not-allowed' : 'pointer', display:'flex', alignItems:'center', gap:5 }}>
+                                      {pinResetLoadingKey === credentialKey ? <Loader2 size={12} style={{ animation:'spin 1s linear infinite' }} /> : <KeyRound size={12} />}
+                                      PIN 번호 재설정
+                                    </button>
+                                  </div>
+                                  <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:7 }}>
+                                    {credentialRows.map(row => (
+                                      <div key={row.label} style={{ background:'#F8F6FF', borderRadius:10, padding:'8px 9px', minWidth:0 }}>
+                                        <div style={{ display:'flex', justifyContent:'space-between', gap:4, alignItems:'center' }}>
+                                          <span style={{ fontSize:9, color:'#9CA3AF', fontWeight:900 }}>{row.label}</span>
+                                          <button onClick={(e) => { e.stopPropagation(); copyText(row.value); }} disabled={!row.value} style={{ border:'none', background:'transparent', color:row.value?'#7C3AED':'#D1D5DB', fontSize:9, fontWeight:900, cursor:row.value?'pointer':'not-allowed' }}>복사</button>
+                                        </div>
+                                        <div style={{ fontSize:11, color:'#1E1B4B', fontWeight:900, marginTop:3, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{row.value || '-'}</div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                  {pinResetNoticeKey === credentialKey && (
+                                    <div style={{ marginTop:9, background:'#FFF7ED', border:'1.5px solid #FED7AA', borderRadius:12, padding:'9px 10px', display:'flex', alignItems:'center', justifyContent:'space-between', gap:8 }}>
+                                      <div style={{ fontSize:11, color:'#9A3412', fontWeight:900 }}>변경된 핀번호를 다른 사람들에게 전달했나요?</div>
+                                      <div style={{ display:'flex', gap:5 }}>
+                                        <button onClick={(e) => { e.stopPropagation(); setPinResetNoticeKey(null); }} style={{ border:'none', borderRadius:999, padding:'5px 9px', background:'#10B981', color:'#fff', fontSize:10, fontWeight:900, cursor:'pointer' }}>네</button>
+                                        <button onClick={(e) => e.stopPropagation()} style={{ border:'none', borderRadius:999, padding:'5px 9px', background:'#FED7AA', color:'#9A3412', fontSize:10, fontWeight:900, cursor:'default' }}>아니오</button>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
 
                                 {acct.generatedAccount && (
                                   <div style={{ background:acct.generatedAccount.paymentStatus==='paid'?'#ECFDF5':'#FFF7ED', border:`1.5px solid ${acct.generatedAccount.paymentStatus==='paid'?'#A7F3D0':'#FED7AA'}`, borderRadius:14, padding:12, marginBottom:10 }}>

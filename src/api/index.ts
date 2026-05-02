@@ -32,6 +32,54 @@ import { decideAutonomousReply } from './auto-reply-autonomy';
 import { buildOperationsCenter, createManualResponseQueueItem, mergeManualResponseQueueItem, summarizeManualResponseQueue, type ManualResponseQueueItem } from '../lib/operations-center';
 
 const EMAIL_SERVER = "http://127.0.0.1:3001";
+const MANAGEMENT_HIDDEN_ACCOUNTS_PATH = '/home/ubuntu/.hermes/hermes-agent/graytag-aio-manager-0606/data/management-hidden-accounts.json';
+
+function loadManagementHiddenAccounts(): { serviceType: string; accountEmail: string; reason?: string }[] {
+  try {
+    if (!existsSync(MANAGEMENT_HIDDEN_ACCOUNTS_PATH)) return [];
+    const parsed = JSON.parse(readFileSync(MANAGEMENT_HIDDEN_ACCOUNTS_PATH, 'utf-8'));
+    return Array.isArray(parsed?.accounts) ? parsed.accounts : Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function applyManagementHiddenAccounts<T extends { services?: any[]; onSaleByKeepAcct?: Record<string, any[]>; summary?: any }>(management: T): T {
+  const hidden = loadManagementHiddenAccounts()
+    .map(item => ({ serviceType: String(item.serviceType || '').trim(), accountEmail: String(item.accountEmail || '').trim().toLowerCase() }))
+    .filter(item => item.serviceType && item.accountEmail);
+  if (hidden.length === 0 || !Array.isArray(management.services)) return management;
+  const isHidden = (serviceType: string, accountEmail: string) => hidden.some(item => item.serviceType === serviceType && item.accountEmail === String(accountEmail || '').toLowerCase());
+  const services = management.services
+    .map((svc: any) => {
+      const accounts = (svc.accounts || []).filter((acct: any) => !isHidden(String(acct.serviceType || svc.serviceType || ''), String(acct.email || '')));
+      return {
+        ...svc,
+        accounts,
+        totalUsingMembers: accounts.reduce((sum: number, acct: any) => sum + Number(acct.usingCount || 0), 0),
+        totalActiveMembers: accounts.reduce((sum: number, acct: any) => sum + Number(acct.activeCount || 0), 0),
+        totalIncome: accounts.reduce((sum: number, acct: any) => sum + Number(acct.totalIncome || 0), 0),
+        totalRealized: accounts.reduce((sum: number, acct: any) => sum + Number(acct.totalRealizedIncome || 0), 0),
+      };
+    })
+    .filter((svc: any) => (svc.accounts || []).length > 0);
+  const onSaleByKeepAcct = { ...(management.onSaleByKeepAcct || {}) };
+  for (const item of hidden) delete onSaleByKeepAcct[item.accountEmail];
+  return {
+    ...management,
+    services,
+    onSaleByKeepAcct,
+    summary: management.summary ? {
+      ...management.summary,
+      totalUsingMembers: services.reduce((sum: number, svc: any) => sum + Number(svc.totalUsingMembers || 0), 0),
+      totalActiveMembers: services.reduce((sum: number, svc: any) => sum + Number(svc.totalActiveMembers || 0), 0),
+      totalIncome: services.reduce((sum: number, svc: any) => sum + Number(svc.totalIncome || 0), 0),
+      totalRealized: services.reduce((sum: number, svc: any) => sum + Number(svc.totalRealized || 0), 0),
+      totalAccounts: services.reduce((sum: number, svc: any) => sum + (svc.accounts || []).length, 0),
+    } : management.summary,
+  };
+}
+
 const app = new Hono();
 app.use(cors({ origin: "*" }));
 
@@ -981,7 +1029,7 @@ app.post('/my/management', async (c) => {
       updatedAt: new Date().toISOString(),
     };
     const withGeneratedAccounts = mergeGeneratedAccountsIntoManagement(management, generatedStore);
-    return mergeOnSaleAccountsIntoManagement(withGeneratedAccounts, onSaleByKeepAcct);
+    return applyManagementHiddenAccounts(mergeOnSaleAccountsIntoManagement(withGeneratedAccounts, onSaleByKeepAcct));
   };
 
   try {
@@ -1096,7 +1144,8 @@ app.post('/post/keepAcct', async (c) => {
     if (!r.ok) return c.json({ error: `계정 설정 실패 (${resp.status})` }, 500);
     if (!r.data?.succeeded) return c.json({ error: r.data?.message || '계정 설정 실패' }, 400);
 
-    return c.json({ ok: true });
+    managementCache.clear('auto-session');
+    return c.json({ ok: true, managementCacheCleared: true });
   } catch (e: any) {
     return c.json({ error: e.message }, 500);
   }
