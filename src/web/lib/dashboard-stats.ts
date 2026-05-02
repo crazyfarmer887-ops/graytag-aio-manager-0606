@@ -25,6 +25,10 @@ export interface DashboardAccount {
   totalRealizedIncome: number;
   expiryDate: string | null;
   keepPasswd?: string;
+  generatedAccount?: {
+    id?: string;
+    paymentStatus?: 'pending' | 'paid';
+  };
 }
 
 export interface DashboardServiceGroup {
@@ -165,6 +169,7 @@ export const OTT_MONTHLY_SUBSCRIPTION_COST: Record<string, number> = {
   '디즈니플러스': 14000,
   '웨이브': 10000,
   '티빙': 10000,
+  '티빙+웨이브': 19500,
 };
 
 const EXCLUDED_SERVICES = new Set(['왓챠', '애플원', '유튜브', '왓챠플레이']);
@@ -211,9 +216,13 @@ function isActualPartyMember(member: Pick<DashboardMember, 'status' | 'statusNam
   return ACTUAL_PARTY_STATUSES.has(member.status) || isAccountCheckingMember(member);
 }
 
+function isPaidGeneratedAccount(account: DashboardAccount): boolean {
+  return account.generatedAccount?.paymentStatus === 'paid';
+}
+
 function shouldCountAccount(account: DashboardAccount, manuals: DashboardManualMember[] = []): boolean {
   if (account.email === '(직접전달)') return false;
-  return account.usingCount > 0 || manualCountForAccount(manuals, account.serviceType, account.email) > 0;
+  return account.usingCount > 0 || manualCountForAccount(manuals, account.serviceType, account.email) > 0 || isPaidGeneratedAccount(account);
 }
 
 export function buildServiceStats(data: DashboardData, manuals: DashboardManualMember[] = []): ServiceStat[] {

@@ -1010,7 +1010,7 @@ export default function ManagePage() {
               const serviceVerifyingCount = svc.accounts.reduce((sum, acct) => sum + acct.members.filter(isAccountCheckingMember).length, 0);
               const actualPartyAccountCount = svc.accounts.filter((acct) => (
                 acct.email !== '(직접전달)' &&
-                (acct.usingCount > 0 || getManualForAccount(acct.email, acct.serviceType).some((m) => m.status === 'active'))
+                (acct.usingCount > 0 || getManualForAccount(acct.email, acct.serviceType).some((m) => m.status === 'active') || acct.generatedAccount?.paymentStatus === 'paid')
               )).length;
               return (
                 <div key={svc.serviceType} style={{ background:'#fff', borderRadius:16, overflow:'hidden', boxShadow:'0 2px 12px rgba(167,139,250,0.08)', border:`1.5px solid ${isOpen?'#A78BFA':'#F3F0FF'}` }}>
@@ -1041,12 +1041,16 @@ export default function ManagePage() {
                         });
                         const hasOnSale = (data?.onSaleByKeepAcct?.[acct.email]?.length ?? 0) > 0;
                         const vi = getVacancyInfo(acct);
-                        if (filter === 'using' && acct.usingCount === 0 && vi.manualCount === 0) return null;
-                        if (filter === 'active' && acct.usingCount === 0 && acct.activeCount === 0 && vi.manualCount === 0 && !hasOnSale) return null;
+                        if (filter === 'using' && acct.usingCount === 0 && vi.manualCount === 0 && !acct.generatedAccount) return null;
+                        if (filter === 'active' && acct.usingCount === 0 && acct.activeCount === 0 && vi.manualCount === 0 && !hasOnSale && !acct.generatedAccount) return null;
                         if (filter !== 'all' && acct.usingCount===0 && acct.activeCount===0 && vi.manualCount === 0 && !hasOnSale && !acct.generatedAccount) return null;
                         const filledSlots = acct.usingCount + vi.manualCount;
                         const totalSlots = getPartyMax(acct.serviceType);
                         const fillPct = Math.round((filledSlots/totalSlots)*100);
+                        const isGeneratedPending = acct.generatedAccount?.paymentStatus === 'pending';
+                        const fillActionLabel = acct.generatedAccount
+                          ? (isGeneratedPending ? '결제/가입 Y 후 게시글 작성 가능' : `${vi.unfilled}자리 게시글 작성`)
+                          : `${vi.unfilled}자리 메꾸기`;
                         const partyInfo = calcPartyDuration(acct.members);
                         const verifyingCount = acct.members.filter(isAccountCheckingMember).length;
                         const emailAliasId = findEmailAliasId(acct);
@@ -1176,25 +1180,7 @@ export default function ManagePage() {
 
                             {isAcctOpen && (
                               <div style={{ borderTop:'1px solid #EDE9FE', padding:'8px 14px' }}>
-                                {(() => {
-                                  const credential = findMaintenanceCredentialForAccount(acct);
-                                  if (!credential) return null;
-                                  return (
-                                    <div style={{ background:'#F8FAFC', border:'1.5px solid #CBD5E1', borderRadius:14, padding:12, marginBottom:10 }}>
-                                      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8, marginBottom:8 }}>
-                                        <div>
-                                          <div style={{ fontSize:13, fontWeight:900, color:'#0F172A' }}>관리자 전용 비밀번호·PIN</div>
-                                          <div style={{ fontSize:10, color:'#64748B', marginTop:2 }}>계정 클릭 시에만 표시 · 외부 공유 금지</div>
-                                        </div>
-                                        {credential.emailId && <button onClick={(e) => { e.stopPropagation(); openEmailDashboardForAccount(acct); }} style={{ border:'none', borderRadius:999, padding:'6px 9px', background:'#E0F2FE', color:'#0369A1', fontSize:10, fontWeight:900, cursor:'pointer' }}>이메일 열기</button>}
-                                      </div>
-                                      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:7 }}>
-                                        <div style={{ background:'#fff', borderRadius:10, padding:'8px 9px' }}><div style={{ fontSize:9, color:'#64748B', fontWeight:800 }}>비밀번호</div><div style={{ fontSize:12, color:'#0F172A', fontWeight:900, marginTop:2 }}>{credential.password || '-'}</div></div>
-                                        <div style={{ background:'#fff', borderRadius:10, padding:'8px 9px' }}><div style={{ fontSize:9, color:'#64748B', fontWeight:800 }}>PIN 번호</div><div style={{ fontSize:12, color:'#0F172A', fontWeight:900, marginTop:2 }}>{credential.pin || '-'}</div></div>
-                                      </div>
-                                    </div>
-                                  );
-                                })()}
+
                                 {acct.generatedAccount && (
                                   <div style={{ background:acct.generatedAccount.paymentStatus==='paid'?'#ECFDF5':'#FFF7ED', border:`1.5px solid ${acct.generatedAccount.paymentStatus==='paid'?'#A7F3D0':'#FED7AA'}`, borderRadius:14, padding:12, marginBottom:10 }}>
                                     <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, marginBottom:8 }}>
@@ -1203,10 +1189,12 @@ export default function ManagePage() {
                                         <div style={{ fontSize:10, color:'#9CA3AF', marginTop:2 }}>판매 게시물 없이도 계정 관리에 유지돼요 · Email ID #{acct.generatedAccount.emailId}</div>
                                       </div>
                                       <div style={{ display:'flex', alignItems:'center', gap:6, flexShrink:0 }}>
-                                        <label onClick={e => e.stopPropagation()} style={{ display:'flex', alignItems:'center', gap:5, background:'#fff', borderRadius:999, padding:'6px 9px', fontSize:11, fontWeight:900, color:acct.generatedAccount.paymentStatus==='paid'?'#059669':'#C2410C', cursor:'pointer' }}>
-                                          <input type="checkbox" checked={acct.generatedAccount.paymentStatus==='paid'} onChange={e => toggleGeneratedAccountPaid(acct, e.target.checked)} />
-                                          결제 완료
-                                        </label>
+                                        <div onClick={e => e.stopPropagation()} style={{ display:'flex', alignItems:'center', gap:4, background:'#fff', borderRadius:999, padding:'4px 6px' }}>
+                                          <span style={{ fontSize:10, fontWeight:900, color:'#6B7280', marginRight:2 }}>결제/가입 완료</span>
+                                          {([['Y', true], ['N', false]] as const).map(([label, paid]) => (
+                                            <button key={label} onClick={() => toggleGeneratedAccountPaid(acct, paid)} style={{ border:'none', borderRadius:999, padding:'4px 8px', fontSize:10, fontWeight:900, cursor:'pointer', fontFamily:'inherit', background:(acct.generatedAccount!.paymentStatus === 'paid') === paid ? (paid ? '#10B981' : '#F97316') : '#F3F4F6', color:(acct.generatedAccount!.paymentStatus === 'paid') === paid ? '#fff' : '#9CA3AF' }}>{label}</button>
+                                          ))}
+                                        </div>
                                         <button onClick={e => { e.stopPropagation(); handleDeleteGeneratedAccount(acct); }} title="방금 생성한 계정 삭제" style={{ border:'none', background:'#FFF0F0', color:'#EF4444', borderRadius:999, padding:'6px 9px', fontSize:11, fontWeight:900, cursor:'pointer', display:'flex', alignItems:'center', gap:4 }}>
                                           <Trash2 size={12} /> 삭제
                                         </button>
@@ -1216,7 +1204,7 @@ export default function ManagePage() {
                                       <div style={{ background:'#fff', borderRadius:10, padding:'8px 9px' }}><div style={{ fontSize:9, color:'#9CA3AF', fontWeight:800 }}>비밀번호</div><div style={{ fontSize:12, color:'#1E1B4B', fontWeight:900, marginTop:2 }}>{acct.keepPasswd || '-'}</div></div>
                                       <div style={{ background:'#fff', borderRadius:10, padding:'8px 9px' }}><div style={{ fontSize:9, color:'#9CA3AF', fontWeight:800 }}>PIN</div><div style={{ fontSize:12, color:'#1E1B4B', fontWeight:900, marginTop:2 }}>{acct.generatedAccount.pin}</div></div>
                                     </div>
-                                    <div style={{ fontSize:10, color:'#C2410C', marginTop:8, lineHeight:1.35 }}>다음 단계: 이 계정으로 서비스 가입 → 결제 완료하면 위 체크표시를 눌러주세요.</div>
+                                    <div style={{ fontSize:10, color:'#C2410C', marginTop:8, lineHeight:1.35 }}>다음 단계: 이 계정으로 티빙·웨이브 가입/결제 → Y 표시 → 아래 생성계정 게시글 작성으로 바로 모집글을 올리세요.</div>
                                   </div>
                                 )}
                                 {filteredMembers.length === 0 ? (
@@ -1332,7 +1320,7 @@ export default function ManagePage() {
 
                                 {/* 메꾸기 버튼 — 빈자리 있고 모집 게시물 부족할 때 */}
                                 {vi.unfilled > 0 && (
-                                  <button onClick={async (e) => {
+                                  <button disabled={isGeneratedPending} title={isGeneratedPending ? '티빙·웨이브 가입/결제 후 Y를 누르면 게시글 작성이 열려요.' : (acct.generatedAccount ? '생성계정 게시글 작성' : '빈자리 메꾸기')} onClick={async (e) => {
                                     e.stopPropagation();
                                     // 기존 OnSale 게시물 또는 이용중 파티원에서 정보 가져오기
                                     const refOnSale = vi.onSaleList[0];
@@ -1397,11 +1385,11 @@ export default function ManagePage() {
                                     await loadFillMemoFromEmailDashboard(acct.email, acct.serviceType, fallbackDeliveryMemo, fillNickname);
                                   }} style={{
                                     width: '100%', marginTop: 8, padding: '10px 14px', borderRadius: 10,
-                                    background: '#FFF0F0', border: '1.5px solid #FCA5A5',
+                                    background: isGeneratedPending ? '#F3F4F6' : '#FFF0F0', border: `1.5px solid ${isGeneratedPending ? '#E5E7EB' : '#FCA5A5'}`,
                                     display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                                    cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 700, color: '#EF4444',
+                                    cursor: isGeneratedPending ? 'not-allowed' : 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 700, color: isGeneratedPending ? '#9CA3AF' : '#EF4444',
                                   }}>
-                                    <PlusCircle size={14} /> {vi.unfilled}자리 메꾸기
+                                    <PlusCircle size={14} /> {fillActionLabel}
                                   </button>
                                 )}
                               </div>

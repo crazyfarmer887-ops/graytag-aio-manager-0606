@@ -21,6 +21,19 @@ export interface SimpleLoginAliasRef {
 
 export type GeneratedAccountStore = Record<string, GeneratedAccount>;
 
+const GENERATED_ACCOUNT_PARTY_MAX: Record<string, number> = {
+  '넷플릭스': 5,
+  '디즈니플러스': 6,
+  '왓챠플레이': 4,
+  '티빙': 4,
+  '웨이브': 4,
+  '티빙+웨이브': 4,
+};
+
+export function getGeneratedAccountPartyMax(serviceType: string): number {
+  return GENERATED_ACCOUNT_PARTY_MAX[String(serviceType || '').trim()] || 6;
+}
+
 export function extractSimpleLoginAliasRef(data: any): SimpleLoginAliasRef | null {
   const candidate = data?.alias ?? data?.data?.alias ?? data;
   if (typeof candidate === 'string') {
@@ -201,7 +214,7 @@ export function generatedAccountToManagementAccount(account: GeneratedAccount) {
     members: [],
     usingCount: 0,
     activeCount: 0,
-    totalSlots: 6,
+    totalSlots: getGeneratedAccountPartyMax(account.serviceType),
     totalIncome: 0,
     totalRealizedIncome: 0,
     expiryDate: null,

@@ -34,14 +34,17 @@ describe('generated accounts', () => {
   test('merges generated accounts into management only when they are not already existing emails', () => {
     const generated = buildGeneratedAccount({ serviceType: '넷플릭스', alias: { id: 101, email: 'new@example.com' }, password: 'a12345678!', pin: '123456', memo: 'memo', now: '2026-04-29T12:00:00.000Z' });
     const existing = buildGeneratedAccount({ serviceType: '넷플릭스', alias: { id: 102, email: 'old@example.com' }, password: 'a12345678!', pin: '123456', memo: 'memo', now: '2026-04-29T12:01:00.000Z' });
+    const doublePass = buildGeneratedAccount({ serviceType: '티빙+웨이브', alias: { id: 103, email: 'gtwavve7@example.com' }, password: 'a12345678!', pin: '123456', memo: 'memo', now: '2026-04-29T12:02:00.000Z' });
     const management = {
       services: [{ serviceType: '넷플릭스', accounts: [{ serviceType: '넷플릭스', email: 'old@example.com' }], totalUsingMembers: 0, totalActiveMembers: 0, totalIncome: 0, totalRealized: 0 }],
       summary: { totalAccounts: 1 },
     };
-    const result = mergeGeneratedAccountsIntoManagement(management, { [generated.id]: generated, [existing.id]: existing });
+    const result = mergeGeneratedAccountsIntoManagement(management, { [generated.id]: generated, [existing.id]: existing, [doublePass.id]: doublePass });
     expect(result.services[0].accounts.map(a => a.email)).toEqual(['new@example.com', 'old@example.com']);
     expect(result.services[0].accounts[0].generatedAccount.paymentStatus).toBe('pending');
-    expect(result.summary.totalAccounts).toBe(2);
+    const doublePassService = result.services.find(s => s.serviceType === '티빙+웨이브');
+    expect(doublePassService?.accounts[0]).toMatchObject({ serviceType: '티빙+웨이브', totalSlots: 4 });
+    expect(result.summary.totalAccounts).toBe(3);
   });
 
   test('normalizes paid/pending payment checkbox patches', () => {

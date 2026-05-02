@@ -185,6 +185,33 @@ describe('dashboard stats', () => {
     });
   });
 
+  test('counts paid generated double-pass accounts in dashboard stats and subscription costs', () => {
+    const partyData = {
+      services: [{
+        serviceType: '티빙+웨이브',
+        totalUsingMembers: 0,
+        totalActiveMembers: 0,
+        totalIncome: 0,
+        totalRealized: 0,
+        accounts: [{
+          email: 'gtwavve7@example.com', serviceType: '티빙+웨이브', usingCount: 0, activeCount: 0,
+          totalSlots: 4, totalIncome: 0, totalRealizedIncome: 0, expiryDate: null,
+          members: [], generatedAccount: { id: 'generated-1', paymentStatus: 'paid' },
+        }],
+      }],
+      onSaleByKeepAcct: {},
+      summary: { totalUsingMembers: 0, totalActiveMembers: 0, totalIncome: 0, totalRealized: 0, totalAccounts: 1 },
+      updatedAt: '2026-06-01T00:00:00.000Z',
+    } as any;
+
+    const stats = buildServiceStats(partyData);
+    expect(stats[0]).toMatchObject({ serviceType: '티빙+웨이브', accountCount: 1, usingMembers: 0, maxSlots: 4 });
+
+    const summary = buildMonthlyNetProfitSummary(partyData);
+    expect(summary.subscriptionCost).toBe(19500);
+    expect(summary.netProfit).toBe(-19500);
+  });
+
   test('builds expired party items and excludes cancelled deals from the expired party component', () => {
     const expired = buildExpiredPartyItems(data, manuals, { today: '2026-09-01' });
     expect(expired.map((item) => item.dealUsid).sort()).toEqual(['expired-1', 'manual-active', 'old-ended-1']);
