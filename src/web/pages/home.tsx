@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
-import ManagePage from "./manage";
-import { MonthlyCalendarWidget } from "./profit";
+import { lazy, Suspense, useEffect, useState } from "react";
+
+const MonthlyCalendarWidget = lazy(() => import("./profit").then((mod) => ({ default: mod.MonthlyCalendarWidget })));
 import { useLocation } from "wouter";
 import { CATEGORIES } from "../lib/constants";
 import { buildDailyInflow, buildMonthlyNetProfitSummary, buildPartyMaintenanceTargets, buildServiceStats, type PartyMaintenanceTarget } from "../lib/dashboard-stats";
@@ -9,6 +9,7 @@ import { buildPartyMaintenanceChecklistItems, buildPartyNoticeTemplate, generate
 import { RefreshCw, ChevronRight, User, Loader2, TrendingUp, TrendingDown, Wallet, CheckCircle2, RotateCcw, Settings, Zap, ShieldAlert, Bell, MessageCircle } from "lucide-react";
 import { Card, StatCard } from "../components/ui/card";
 import { StatusBadge } from "../components/ui/status-badge";
+import { parseJsonResponse } from "../lib/fetch-json";
 
 // ─── 타입 ─────────────────────────────────────────────────────
 interface Member {
@@ -288,7 +289,7 @@ function PartyFeedbackPanel({ manageData }: { manageData: ManageData }) {
   const fetchSettings = async () => {
     try {
       const res = await fetch('/api/feedback-settings');
-      const json = await res.json() as any;
+      const json = await parseJsonResponse<any>(res, '/api/feedback-settings');
       setWarningDays(json.underfillWarningDays ?? 0);
     } catch {}
   };
@@ -312,7 +313,7 @@ function PartyFeedbackPanel({ manageData }: { manageData: ManageData }) {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ manageData }),
       });
-      const json = await res.json() as any;
+      const json = await parseJsonResponse<any>(res, '/api/party-feedback/generate');
       setItems(json.items || []);
     } catch {} finally { setLoading(false); }
   };
@@ -320,7 +321,7 @@ function PartyFeedbackPanel({ manageData }: { manageData: ManageData }) {
   const toggle = async (id: string) => {
     try {
       const res = await fetch(`/api/party-feedback/${encodeURIComponent(id)}/toggle`, { method: 'POST' });
-      const json = await res.json() as any;
+      const json = await parseJsonResponse<any>(res, '/api/party-feedback/:id/toggle');
       if (json.ok) setItems(prev => prev.map(i => i.id === id ? json.item : i));
     } catch {}
   };
@@ -763,7 +764,7 @@ export default function HomePage() {
     try {
       const res = await fetch('/api/seller/status');
       if (!res.ok) return;
-      setSellerStatus(await res.json() as SellerStatus);
+      setSellerStatus(await parseJsonResponse<SellerStatus>(res, '/api/seller/status'));
     } catch { /* 상태판은 보조 정보라 홈 조회를 막지 않음 */ }
   };
 
@@ -771,7 +772,7 @@ export default function HomePage() {
     try {
       const res = await fetch('/api/safe-mode');
       if (!res.ok) return;
-      setSafeMode(await res.json() as SafeModeState);
+      setSafeMode(await parseJsonResponse<SafeModeState>(res, '/api/safe-mode'));
     } catch { /* 안전 모드 배너는 보조 정보라 홈 조회를 막지 않음 */ }
   };
 
@@ -780,7 +781,7 @@ export default function HomePage() {
     try {
       const res = await fetch('/api/operations-center/summary');
       if (!res.ok) return;
-      setOperationsCenter(await res.json() as OperationsCenterState);
+      setOperationsCenter(await parseJsonResponse<OperationsCenterState>(res, '/api/operations-center/summary'));
     } catch { /* 운영센터는 보조 정보라 홈 조회를 막지 않음 */ }
     finally { setOperationsCenterLoading(false); }
   };
@@ -789,7 +790,7 @@ export default function HomePage() {
     try {
       const res = await fetch('/api/party-maintenance-checklists');
       if (!res.ok) return;
-      const json = await res.json() as { store?: PartyMaintenanceChecklistStore };
+      const json = await parseJsonResponse<{ store?: PartyMaintenanceChecklistStore }>(res, '/api/party-maintenance-checklists');
       setPartyMaintenanceChecklistStore(json.store || {});
     } catch { /* 체크리스트는 보조 정보라 홈 조회를 막지 않음 */ }
   };
@@ -802,7 +803,7 @@ export default function HomePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(patch),
       });
-      const json = await res.json() as { ok?: boolean; store?: PartyMaintenanceChecklistStore };
+      const json = await parseJsonResponse<{ ok?: boolean; store?: PartyMaintenanceChecklistStore }>(res, '/api/party-maintenance-checklists/:key');
       if (res.ok && json.store) setPartyMaintenanceChecklistStore(json.store);
     } catch { await fetchPartyMaintenanceChecklists(); }
   };
@@ -817,7 +818,7 @@ export default function HomePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ accountEmail: item.target.accountEmail, serviceType: item.target.serviceType }),
       });
-      const json = await res.json() as { ok?: boolean; error?: string; store?: PartyMaintenanceChecklistStore };
+      const json = await parseJsonResponse<{ ok?: boolean; error?: string; store?: PartyMaintenanceChecklistStore }>(res, '/api/party-maintenance-checklists/:key/pin/regenerate');
       if (!res.ok || !json.ok) throw new Error(json.error || 'PIN 재생성 실패');
       if (json.store) setPartyMaintenanceChecklistStore(json.store);
     } catch (e: any) {
@@ -838,7 +839,7 @@ export default function HomePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ targetEmail: item.target.accountEmail, message, excludeDealUsids, checklistKey: item.key }),
       });
-      const json = await res.json() as { ok?: boolean; error?: string; sent?: number; failed?: number; store?: PartyMaintenanceChecklistStore };
+      const json = await parseJsonResponse<{ ok?: boolean; error?: string; sent?: number; failed?: number; store?: PartyMaintenanceChecklistStore }>(res, '/api/chat/notice/send');
       if (!res.ok || !json.ok) throw new Error(json.error || '공지 발송 실패');
       if (json.store) setPartyMaintenanceChecklistStore(json.store);
       else await updatePartyMaintenanceChecklist(item.key, { noticeSent: true, noticeTemplate: message });
@@ -856,7 +857,7 @@ export default function HomePage() {
     setChatError(null);
     try {
       const res = await fetch('/api/chat/rooms');
-      const json = await res.json() as { rooms?: ChatAlertRoom[]; unreadCount?: number; updatedAt?: string; error?: string; fromCache?: boolean; rateLimited?: boolean; messageHydrationFailedCount?: number };
+      const json = await parseJsonResponse<{ rooms?: ChatAlertRoom[]; unreadCount?: number; updatedAt?: string; error?: string; fromCache?: boolean; rateLimited?: boolean; messageHydrationFailedCount?: number }>(res, '/api/chat/rooms');
       if (!res.ok) throw new Error(json.error || '채팅 알림 조회 실패');
       const alerts = buildLatestChatMessages(json.rooms || [], 10);
       setChatAlerts(alerts);
@@ -886,7 +887,7 @@ export default function HomePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: nextEnabled, reason, updatedBy: 'dashboard' }),
       });
-      const json = await res.json() as any;
+      const json = await parseJsonResponse<any>(res, '/api/safe-mode');
       if (!res.ok) throw new Error(json.error || '안전 모드 변경 실패');
       setSafeMode(json as SafeModeState);
     } catch (e: any) {
@@ -910,8 +911,8 @@ export default function HomePage() {
         }),
         fetch('/api/manual-members'),
       ]);
-      const manageJson = await manageRes.json() as any;
-      const manualsJson = await manualsRes.json() as any;
+      const manageJson = await parseJsonResponse<any>(manageRes, '/api/my/management');
+      const manualsJson = await parseJsonResponse<any>(manualsRes, '/api/manual-members');
       if (!manageRes.ok) setError(manageJson.error || '조회 실패');
       else {
         setData(manageJson);
@@ -985,9 +986,19 @@ export default function HomePage() {
         </button>
       </div>
 
-      <div style={{ marginBottom: 18, border: '2px solid #EDE9FE', borderRadius: 22, overflow: 'hidden', background: '#F8F6FF' }}>
-        <ManagePage />
-      </div>
+      <Card style={{ marginBottom: 18, background: '#F8F6FF', border: '1.5px solid #EDE9FE' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 900, color: '#1E1B4B' }}>계정 관리</div>
+            <div style={{ fontSize: 11, color: '#7C3AED', marginTop: 3, lineHeight: 1.45 }}>
+              홈 초기 로딩을 빠르게 하기 위해 계정 관리는 별도 화면에서 필요할 때만 불러와요.
+            </div>
+          </div>
+          <button onClick={() => navigate('/manage')} style={{ border: 'none', borderRadius: 12, padding: '9px 12px', background: '#7C3AED', color: '#fff', fontSize: 12, fontWeight: 900, cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0 }}>
+            계정 관리 열기
+          </button>
+        </div>
+      </Card>
 
       {safeMode && (
         <div style={{
@@ -1274,7 +1285,9 @@ export default function HomePage() {
 
           {/* 월간 캘린더 + 구독설정 */}
           <div style={{ marginTop: 8, borderTop: '2px solid #EDE9FE', paddingTop: 4 }}>
-            <MonthlyCalendarWidget data={data} />
+            <Suspense fallback={<div style={{ padding: 12, fontSize: 12, color: '#7C3AED', fontWeight: 800 }}>월간 캘린더 불러오는 중...</div>}>
+              <MonthlyCalendarWidget data={data} />
+            </Suspense>
           </div>
 
           {/* 일별 파티 유입 그래프 */}

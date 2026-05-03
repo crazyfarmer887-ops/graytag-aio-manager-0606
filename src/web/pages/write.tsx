@@ -2,7 +2,8 @@ import { useState, useEffect, useRef } from "react";
 import { KeyRound, PartyPopper, CheckCircle2, KeySquare, Loader2, AlertTriangle, Trophy, Info, PenLine, Check, X, Square, Clock, ArrowLeftRight, Type, Mail, Link } from "lucide-react";
 import type { PartyMaintenanceChecklistStore } from "../../lib/party-maintenance-checklist";
 import { findMaintenanceCredentialForAlias } from "../../lib/write-maintenance-autofill";
-import { buildProfileAssignment, buildProfileWarningMemo, generateProfileNickname, isValidProfileNickname, normalizeProfileNickname } from "../../lib/profile-nickname";
+import { buildPartyAccessDeliveryTemplate, PARTY_ACCESS_URL_PLACEHOLDER } from "../../lib/party-access-template";
+import { buildProfileAssignment, generateProfileNickname, isValidProfileNickname, normalizeProfileNickname } from "../../lib/profile-nickname";
 
 interface SlAlias { id: number; email: string; enabled: boolean; nb_forward: number; pin?: string | null; hasPin?: boolean; }
 
@@ -85,11 +86,8 @@ export default function WritePage() {
   const [presetNotice, setPresetNotice] = useState('');
   const [title, setTitle] = useState(() => getPresetForService(DEFAULT_SERVICE_KEY).title);
 
-  const makeDefaultKeepMemo = (emailId?: number|string, pin?: string, profileName?: string) => {
-    const eid = emailId || '{EMAIL_ID}';
-    const p = pin || '{PIN}';
-    const baseMemo = `아래 내용 꼭 읽어주세요! 로그인 관련 내용입니다!!\n로그인 시도 간 필요한 이메일 코드는 아래 사이트에서 언제든지 셀프인증 가능합니다!\nhttps://email-verify.xyz/email/mail/${eid}\n사이트에서 필요한 핀번호는 : ${p}입니다!\n\n프로필을 만드실 때는 배정된 프로필명만 사용해주세요.\n만약, 접속 시 기본 프로필 1개만 있거나 자리가 꽉 찼는데 기본 프로필이 있다면 그걸 먼저 수정하고 사용하시면 되겠습니다!\n\n🎬 성인인증은 필요하시면 직접 하셔야 합니다! 🎬\n\n즐거운 시청되세요!`;
-    return profileName?.trim() ? buildProfileWarningMemo(profileName, baseMemo) : baseMemo;
+  const makeDefaultKeepMemo = (_emailId?: number|string, _pin?: string, _profileName?: string) => {
+    return buildPartyAccessDeliveryTemplate(PARTY_ACCESS_URL_PLACEHOLDER);
   };
 
   const [description, setDescription] = useState(() => getPresetForService(DEFAULT_SERVICE_KEY).description);
@@ -532,9 +530,9 @@ export default function WritePage() {
               랜덤 생성
             </button>
           </div>
-          <div style={{ background: '#FFFBEB', borderRadius: 8, padding: '8px 10px', marginBottom: 10, fontSize: 11, color: '#92400E' }}>
-            ⚠️ 1인 1프로필 원칙 안내가 계정 전달 문구 맨 위에 자동으로 들어갑니다.
-          </div>
+              <div style={{ background: '#F0FDF4', borderRadius: 8, padding: '8px 10px', marginBottom: 10, fontSize: 11, color: '#047857' }}>
+                ✅ 계정 접근 링크 템플릿이 기본으로 들어갑니다. 구매자별 링크는 계정 관리에서 파티원별로 생성·복사하세요.
+              </div>
           <label style={labelStyle}>아이디 (이메일) *</label>
           <input value={keepAcct} onChange={e => setKeepAcct(e.target.value)} placeholder="example@email.com" style={inputStyle} />
           <label style={labelStyle}>비밀번호 *</label>

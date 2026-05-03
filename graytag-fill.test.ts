@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { assertAutoDeliveryInput, buildAutoFillDeliveryMemo, buildFillProductModel, buildFinishedDealsUrl, findExactPasswordForAccount, makeDefaultSellingGuide, requireExactAliasMemoForAutoFill } from './src/lib/graytag-fill';
+import { assertAutoDeliveryInput, buildAutoFillDeliveryMemo, buildFillPartyAccessMember, buildFillProductModel, buildFinishedDealsUrl, findExactPasswordForAccount, makeDefaultSellingGuide, requireExactAliasMemoForAutoFill } from './src/lib/graytag-fill';
 
 describe('graytag fill product helpers', () => {
   test('fill-created listings include the same selling guide as normal listing registration', () => {
@@ -23,16 +23,32 @@ describe('graytag fill product helpers', () => {
     expect(assertAutoDeliveryInput({ keepAcct: 'acct@example.com', keepPasswd: 'pw', keepMemo: '' })).toContain('전달 문구');
   });
 
-  test('auto-fill delivery memo prepends the repeated assigned-profile warning', () => {
-    const memo = buildAutoFillDeliveryMemo('수달이', '✅ 아래 내용 꼭 읽어주세요! 로그인 관련 내용입니다!!');
+  test('auto-fill delivery memo uses the real generated access URL, not the placeholder text', () => {
+    const memo = buildAutoFillDeliveryMemo('수달이', 'https://example.com/dashboard/access/live-token');
 
-    expect(memo.startsWith('⚠️ 1인 1프로필 원칙 안내 ⚠️')).toBe(true);
-    expect(memo.match(/⚠️ 1인 1프로필 원칙 안내 ⚠️/g)).toHaveLength(3);
-    expect(memo.match(/배정된 프로필 이름 : 수달이/g)).toHaveLength(3);
-    expect(memo.match(/프로필을 만드실 때 해당 이름으로 꼭 만드신 뒤 사용하셔야 합니다\. 그리고 반드시 위 프로필만 사용해주세요\./g)).toHaveLength(3);
-    expect(memo).toContain('✅ 아래 내용 꼭 읽어주세요! 로그인 관련 내용입니다!!');
-    expect(memo).not.toContain('배정 프로필:');
-    expect(memo).not.toContain('프로필명이 없거나 접속이 안 되면');
+    expect(memo).toContain('✅ 계정 접근 주소 : https://example.com/dashboard/access/live-token ✅');
+    expect(memo).toContain('이메일 인증은 링크 안에 적힌 핀번호를 이용해서 접근');
+    expect(memo).not.toContain('{계정 접근 토큰 생성 주소}');
+    expect(memo).not.toContain('⚠️ 1인 1프로필 원칙 안내 ⚠️');
+  });
+
+  test('fill-created access links use the created listing id and the selected end date as expiry', () => {
+    const member = buildFillPartyAccessMember({
+      productUsid: '451893015',
+      profileNickname: '오렌지',
+      endDateTime: '20260703T2359',
+    });
+
+    expect(member).toEqual({
+      kind: 'graytag',
+      memberId: 'fill:451893015',
+      memberName: '구매자',
+      profileName: '오렌지',
+      status: 'OnSale',
+      statusName: '판매 중',
+      startDateTime: null,
+      endDateTime: '20260703T2359',
+    });
   });
 
   test('management lookup can request both current-only and finished-included deal lists', () => {

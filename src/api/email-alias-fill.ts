@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { resolveDoublePassBundleNo } from '../lib/tving-wavve-bundle';
 
 export interface EmailAliasCandidate {
   id: number | string;
@@ -134,6 +135,16 @@ function chooseAlias(accountEmail: string, serviceType: string, aliases: EmailAl
 
   const keys = serviceKeywords(serviceType);
   const withPin = enabledAliases.filter(a => pinStore[String(a.id)]?.pin);
+
+  const doublePassNo = resolveDoublePassBundleNo({ serviceType, email: accountEmail, loginId: accountEmail, accountId: accountEmail });
+  if (doublePassNo) {
+    const sameNumberMatches = withPin.filter(a => {
+      const local = normalizeEmail(a.email).split('@')[0] || '';
+      return new RegExp(`(?:gtwavve|wavve|tving)${doublePassNo}(?:\\D|$)`, 'i').test(local);
+    });
+    if (sameNumberMatches.length) return sameNumberMatches.sort((a, b) => Number(b.id) - Number(a.id))[0];
+  }
+
   const serviceMatches = withPin.filter(a => keys.some(key => normalizeEmail(a.email).includes(key)));
   if (serviceMatches.length) {
     return serviceMatches.sort((a, b) => Number(b.id) - Number(a.id))[0];

@@ -86,6 +86,7 @@ export function verifyDashboardSessionCookie(cookieHeader: string | null | undef
 
 export function isDashboardHtmlPath(pathname: string): boolean {
   if (pathname === '/dashboard' || pathname === '/dashboard/') return true;
+  if (pathname === '/dashboard/access' || pathname.startsWith('/dashboard/access/')) return false;
   if (!pathname.startsWith('/dashboard/')) return false;
   if (pathname.startsWith('/dashboard/assets/')) return false;
   const last = pathname.split('/').pop() || '';

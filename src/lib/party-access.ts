@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { GeneratedAccountStore } from './generated-accounts';
 import type { PartyMaintenanceChecklistStore } from './party-maintenance-checklist';
+export { buildPartyAccessDeliveryTemplate } from './party-access-template';
 
 export type PartyAccessMemberKind = 'graytag' | 'manual';
 
@@ -21,6 +22,8 @@ export interface PartyAccessLinkRecord {
   accountEmail: string;
   fallbackPassword: string;
   fallbackPin: string;
+  profileName: string;
+  emailAccessUrl: string;
   member: PartyAccessMemberRef;
   createdAt: string;
   revokedAt: string | null;
@@ -95,6 +98,8 @@ export function createPartyAccessLinkRecord(input: {
   accountEmail: string;
   fallbackPassword?: string;
   fallbackPin?: string;
+  profileName?: string;
+  emailAccessUrl?: string;
   member: PartyAccessMemberRef;
 }): PartyAccessLinkRecord {
   const now = input.now || new Date().toISOString();
@@ -107,6 +112,8 @@ export function createPartyAccessLinkRecord(input: {
     accountEmail: normalizeKeyPart(input.accountEmail),
     fallbackPassword: String(input.fallbackPassword || '').slice(0, 300),
     fallbackPin: String(input.fallbackPin || '').replace(/\D/g, '').slice(0, 6),
+    profileName: normalizeKeyPart(input.profileName || input.member.memberName || '(미확인)').slice(0, 40),
+    emailAccessUrl: normalizeKeyPart(input.emailAccessUrl || '').slice(0, 500),
     member: {
       kind: input.member.kind,
       memberId,
@@ -169,6 +176,8 @@ export function buildPartyAccessPublicPayload(
   serviceType?: string;
   accountEmail?: string;
   memberName?: string;
+  profileName?: string;
+  emailAccessUrl?: string;
   period?: { startDateTime: string | null; endDateTime: string | null };
   credentials?: PartyAccessCredentials;
   audit: { memberId: string; allowed: boolean; reason: string; viewedAt: string };
@@ -181,6 +190,8 @@ export function buildPartyAccessPublicPayload(
     serviceType: record.serviceType,
     accountEmail: record.accountEmail,
     memberName: record.member.memberName,
+    profileName: record.profileName || record.member.memberName,
+    emailAccessUrl: record.emailAccessUrl || '',
     period: { startDateTime: record.member.startDateTime || null, endDateTime: record.member.endDateTime || null },
     audit: { memberId: record.member.memberId, allowed: allowed.allowed, reason: allowed.reason, viewedAt: now },
   };

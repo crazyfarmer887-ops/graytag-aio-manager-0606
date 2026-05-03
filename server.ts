@@ -15,6 +15,7 @@ import { scheduleAutoSync } from './src/scheduler/auto-sync.ts';
 import { startUndercutterScheduler } from './src/scheduler/undercutter.ts';
 import { startPollDaemon } from './src/scheduler/poll-daemon.ts';
 import { startAutoReplyDaemon } from './src/scheduler/auto-reply-daemon.ts';
+import { buildPartyAccessHtml } from './src/lib/party-access-page-html.ts';
 
 const distDir = resolve(process.cwd(), 'dist/client');
 
@@ -94,13 +95,30 @@ app.post('/dashboard/login', async (c) => {
   });
 });
 
+function partyAccessHtmlResponse(token: string): Response {
+  return new Response(buildPartyAccessHtml(token), {
+    headers: {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'no-store',
+    },
+  });
+}
+
+app.get('/dashboard/access/:token', (c) => partyAccessHtmlResponse(c.req.param('token')));
+app.get('/access/:token', (c) => partyAccessHtmlResponse(c.req.param('token')));
+
+function normalizeDashboardAssetPath(pathname: string): string {
+  return pathname.startsWith('/dashboard/assets/') ? pathname.replace(/^\/dashboard(?=\/assets\/)/, '') : pathname;
+}
+
 app.get('*', async (c) => {
   const url = new URL(c.req.url);
   const pathname = decodeURIComponent(url.pathname);
   if (isDashboardHtmlPath(pathname) && !verifyDashboardSessionCookie(c.req.header('cookie'), dashboardAdminPassword())) {
     return new Response(dashboardLoginHtml(), { status: 401, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
   }
-  const candidatePath = pathname === '/' ? '/index.html' : pathname;
+  const assetPathname = normalizeDashboardAssetPath(pathname);
+  const candidatePath = assetPathname === '/' || assetPathname === '/dashboard' || assetPathname === '/dashboard/' ? '/index.html' : assetPathname;
   const filePath = resolve(distDir, `.${candidatePath}`);
 
   if (!filePath.startsWith(distDir)) return c.text('Forbidden', 403);
@@ -112,7 +130,7 @@ app.get('*', async (c) => {
       return new Response(content, {
         headers: {
           'content-type': MIME_TYPES[extname(filePath)] ?? 'application/octet-stream',
-          'cache-control': pathname === '/' ? 'no-cache' : 'public, max-age=31536000, immutable',
+          'cache-control': candidatePath === '/index.html' ? 'no-cache' : 'public, max-age=31536000, immutable',
         },
       });
     }

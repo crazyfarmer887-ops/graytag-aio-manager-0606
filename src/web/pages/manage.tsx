@@ -2,10 +2,12 @@ import { useState, useEffect } from "react";
 import { CATEGORIES } from "../lib/constants";
 import { buildAccountSlotStates, dedupeRecruitingProducts, mergeRecruitingProducts, type SlotState } from "../lib/account-slots";
 import { removeRecruitingProductFromManageData } from "../lib/manage-optimistic";
-import { assertAutoDeliveryInput, buildAutoFillDeliveryMemo, buildFillProductModel, findExactPasswordForAccount, requireExactAliasMemoForAutoFill } from "../../lib/graytag-fill";
+import { assertAutoDeliveryInput, buildAutoFillDeliveryMemo, buildFillPartyAccessMember, buildFillProductModel, findExactPasswordForAccount, requireExactAliasMemoForAutoFill } from "../../lib/graytag-fill";
 import { generateProfileNickname, generateUniqueProfileNicknames, isValidProfileNickname, normalizeProfileNickname } from "../../lib/profile-nickname";
 import type { PartyMaintenanceChecklistStore } from "../../lib/party-maintenance-checklist";
 import { getGeneratedAccountCreationCopy } from "../../lib/generated-accounts";
+import { buildPartyAccessDeliveryTemplate, PARTY_ACCESS_URL_PLACEHOLDER } from "../../lib/party-access-template";
+import { parseJsonResponse } from "../lib/fetch-json";
 import { RefreshCw, KeyRound, Mail, ChevronDown, ChevronRight, TrendingUp, Loader2, AlertCircle, ExternalLink, Calendar, UserX, Megaphone, PlusCircle, X, UserPlus, Trash2, Wifi, WifiOff } from "lucide-react";
 
 interface OnSaleProduct {
@@ -38,6 +40,7 @@ interface Account {
 }
 interface ServiceGroup { serviceType: string; accounts: Account[]; totalUsingMembers: number; totalActiveMembers: number; totalIncome: number; totalRealized: number; }
 interface EmailAlias { id: number | string; email: string; enabled?: boolean; }
+interface ExistingPinCacheEntry { pin: string; emailId: number | string | null; loading: boolean; checked: boolean; message?: string; }
 interface ManageData {
   services: ServiceGroup[];
   onSaleByKeepAcct: Record<string, OnSaleProduct[]>;
@@ -129,6 +132,14 @@ interface ManualMember {
 
 const SOURCE_PRESETS = ['당근마켓', '에브리타임', '지인소개', '번개장터', '카카오톡', '네이버카페', '인스타그램', '기타'];
 
+const stableRandomFromSeed = (seed: string) => {
+  let state = Array.from(seed || 'graytag').reduce((acc, ch) => ((acc * 31) + ch.charCodeAt(0)) >>> 0, 2166136261);
+  return () => {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    return state / 0x100000000;
+  };
+};
+
 type FilterMode = 'using'|'active'|'all';
 
 function ManualResponseQueuePanel() {
@@ -197,7 +208,7 @@ export default function ManagePage() {
   const [fillCount, setFillCount] = useState(1);
   const [fillKeepMemo, setFillKeepMemo] = useState('');
   const [fillProfileNickname, setFillProfileNickname] = useState('');
-  const [fillAliasStatus, setFillAliasStatus] = useState<{ ok: boolean; message: string; email?: string; serviceType?: string; memo?: string } | null>(null);
+  const [fillAliasStatus, setFillAliasStatus] = useState<{ ok: boolean; message: string; email?: string; serviceType?: string; memo?: string; emailId?: number | string | null; pin?: string | null; emailAccessUrl?: string } | null>(null);
   const [fillAliasLoading, setFillAliasLoading] = useState(false);
   const [fillLoading, setFillLoading] = useState(false);
   const [fillResult, setFillResult] = useState<string|null>(null);
@@ -228,6 +239,7 @@ export default function ManagePage() {
   const [accountCreateResult, setAccountCreateResult] = useState<string | null>(null);
   const accountCreateCopy = getGeneratedAccountCreationCopy(accountCreateService);
   const [emailAliases, setEmailAliases] = useState<EmailAlias[]>([]);
+  const [existingPinCache, setExistingPinCache] = useState<Record<string, ExistingPinCacheEntry>>({});
   const [maintenanceChecklistStore, setMaintenanceChecklistStore] = useState<PartyMaintenanceChecklistStore>({});
   const [pinResetLoadingKey, setPinResetLoadingKey] = useState<string | null>(null);
   const [pinResetNoticeKey, setPinResetNoticeKey] = useState<string | null>(null);
@@ -244,10 +256,45 @@ export default function ManagePage() {
     } catch { setEmailAliases([]); }
   };
 
+  const accountCredentialKey = (acct: Pick<Account, 'serviceType' | 'email'>) => `${acct.serviceType}:${acct.email}`;
+
   const findEmailAliasId = (acct: Account): string | number | null => {
     if (acct.generatedAccount?.emailId) return acct.generatedAccount.emailId;
     const exact = emailAliases.find(alias => String(alias.email || '').toLowerCase() === acct.email.toLowerCase());
     return exact?.id ?? null;
+  };
+
+  const findExistingPinRecordForAccount = (acct: Account) => existingPinCache[accountCredentialKey(acct)];
+
+  const loadExistingPinForAccount = async (acct: Account) => {
+    const key = accountCredentialKey(acct);
+    const cached = existingPinCache[key];
+    if (cached?.loading || cached?.checked) return;
+    setExistingPinCache(prev => {
+      const current = prev[key];
+      if (current?.loading || current?.checked) return prev;
+      return { ...prev, [key]: { pin: current?.pin || '', emailId: current?.emailId ?? findEmailAliasId(acct), loading: true, checked: false, message: '기존 PIN 로딩중' } };
+    });
+    try {
+      const res = await fetch(`/api/email-alias-fill?email=${encodeURIComponent(acct.email)}&serviceType=${encodeURIComponent(acct.serviceType)}`);
+      const json = await res.json() as { ok?: boolean; pin?: string | null; emailId?: number | string | null; message?: string };
+      const pin = typeof json.pin === 'string' ? json.pin.trim() : '';
+      setExistingPinCache(prev => ({
+        ...prev,
+        [key]: {
+          pin,
+          emailId: json.emailId ?? findEmailAliasId(acct),
+          loading: false,
+          checked: true,
+          message: res.ok && json.ok && pin ? '기존 PIN 로드 완료' : (json.message || '기존 PIN 없음'),
+        },
+      }));
+    } catch (e: any) {
+      setExistingPinCache(prev => ({
+        ...prev,
+        [key]: { pin: '', emailId: findEmailAliasId(acct), loading: false, checked: true, message: e?.message || '기존 PIN 로드 실패' },
+      }));
+    }
   };
 
   const openEmailDashboardForAccount = (acct: Account) => {
@@ -266,13 +313,14 @@ export default function ManagePage() {
   };
 
   const findMaintenanceCredentialForAccount = (acct: Account) => {
-    const key = `${acct.serviceType}:${acct.email}`;
+    const key = accountCredentialKey(acct);
     const state = maintenanceChecklistStore[key];
+    const existingPin = existingPinCache[key];
     const password = acct.keepPasswd || state?.changedPassword || '';
-    const pin = state?.generatedPin || acct.generatedAccount?.pin || '';
-    const emailId = state?.generatedPinAliasId || acct.generatedAccount?.emailId || findEmailAliasId(acct);
+    const pin = state?.generatedPin || acct.generatedAccount?.pin || existingPin?.pin || '';
+    const emailId = state?.generatedPinAliasId || acct.generatedAccount?.emailId || existingPin?.emailId || findEmailAliasId(acct);
     if (!password && !pin) return null;
-    return { password, pin, emailId, source: acct.generatedAccount ? 'generated' : 'maintenance' };
+    return { password, pin, emailId, source: state?.generatedPin ? 'maintenance' : acct.generatedAccount ? 'generated' : existingPin?.pin ? 'email-dashboard' : 'maintenance' };
   };
 
   const copyText = async (value: string) => {
@@ -291,6 +339,18 @@ export default function ManagePage() {
       const json = await res.json() as any;
       if (!res.ok || !json.ok) throw new Error(json.error || 'PIN 번호 재설정 실패');
       setMaintenanceChecklistStore(json.store || { ...maintenanceChecklistStore, [key]: json.item });
+      if (json.item?.generatedPin) {
+        setExistingPinCache(prev => ({
+          ...prev,
+          [key]: {
+            pin: json.item.generatedPin,
+            emailId: json.item.generatedPinAliasId ?? findEmailAliasId(acct),
+            loading: false,
+            checked: true,
+            message: 'PIN 번호 재설정 완료',
+          },
+        }));
+      }
       setPinResetNoticeKey(key);
       await doFetch(undefined, true);
     } catch (e: any) {
@@ -337,8 +397,10 @@ export default function ManagePage() {
     }
   };
 
-  const createPartyAccessLink = async (acct: Account, member: { kind: 'graytag' | 'manual'; memberId: string; memberName: string; status: string; statusName?: string; startDateTime?: string | null; endDateTime?: string | null }) => {
-    const key = `${acct.serviceType}:${acct.email}:${member.kind}:${member.memberId}`;
+  const buildEmailAccessUrl = (emailId?: number | string | null) => emailId ? `https://email-verify.xyz/email/mail/${encodeURIComponent(String(emailId))}` : '';
+
+  const createPartyAccessLink = async (acct: Account, member: { kind: 'graytag' | 'manual'; memberId: string; memberName: string; profileName?: string; status: string; statusName?: string; startDateTime?: string | null; endDateTime?: string | null }, copyMode: 'url' | 'template' = 'url') => {
+    const key = `${acct.serviceType}:${acct.email}:${member.kind}:${member.memberId}:${copyMode}`;
     const credential = findMaintenanceCredentialForAccount(acct);
     setAccessLinkLoadingKey(key);
     try {
@@ -349,12 +411,14 @@ export default function ManagePage() {
           accountEmail: acct.email,
           fallbackPassword: credential?.password || acct.keepPasswd || '',
           fallbackPin: credential?.pin || acct.generatedAccount?.pin || '',
+          profileName: member.profileName || member.memberName,
+          emailAccessUrl: buildEmailAccessUrl(credential?.emailId ?? findEmailAliasId(acct)),
           member,
         }),
       });
       const json = await res.json() as any;
       if (!res.ok || !json.ok || !json.url) throw new Error(json.error || '접근 링크 만들기 실패');
-      await copyText(json.url);
+      await copyText(copyMode === 'template' ? buildPartyAccessDeliveryTemplate(json.url) : json.url);
       setAccessLinkResult({ key, url: json.url });
     } catch (e: any) {
       alert(e.message || '접근 링크 만들기 실패');
@@ -515,9 +579,10 @@ export default function ManagePage() {
       const res = await fetch(`/api/email-alias-fill?email=${encodeURIComponent(email)}&serviceType=${encodeURIComponent(serviceType)}`);
       const data = await res.json() as any;
       if (res.ok && data?.ok && data.memo) {
-        const deliveryMemo = buildAutoFillDeliveryMemo(profileNickname, data.memo);
+        const deliveryMemo = buildAutoFillDeliveryMemo(profileNickname, PARTY_ACCESS_URL_PLACEHOLDER);
+        const emailAccessUrl = buildEmailAccessUrl(data.emailId);
         setFillKeepMemo(deliveryMemo);
-        setFillAliasStatus({ ok: true, message: `이메일 대시보드 DB에서 자동 입력됨: #${data.emailId}`, email, serviceType, memo: deliveryMemo });
+        setFillAliasStatus({ ok: true, message: `이메일 대시보드 DB 확인됨: #${data.emailId} · 등록 시 실제 접근 링크 자동 생성`, email, serviceType, memo: deliveryMemo, emailId: data.emailId ?? null, pin: data.pin ?? null, emailAccessUrl });
         return deliveryMemo;
       }
 
@@ -544,17 +609,51 @@ export default function ManagePage() {
   };
   const [fillRankLoading, setFillRankLoading] = useState(false);
 
+  const isTransientFetchError = (e: any) => /Load failed|Failed to fetch|NetworkError|aborted|abort|terminated/i.test(String(e?.message || e || ''));
+  const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+  const fetchManagementJson = async (body: Record<string, unknown>, forceRefresh: boolean) => {
+    let lastError: any = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), 70000);
+      try {
+        const res = await fetch(forceRefresh ? '/api/my/management?refresh=1' : '/api/my/management', {
+          method:'POST',
+          headers:{ 'Content-Type':'application/json', 'Cache-Control': forceRefresh ? 'no-cache' : 'no-store' },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+        const json = await parseJsonResponse<any>(res, '계정 관리');
+        return { res, json };
+      } catch (e: any) {
+        lastError = e;
+        if (attempt > 0 || !isTransientFetchError(e)) throw e;
+        await sleep(450);
+      } finally {
+        window.clearTimeout(timeoutId);
+      }
+    }
+    throw lastError;
+  };
+
   const doFetch = async (id?: string, forceRefresh = false) => {
     const cs = cookies.find(c => c.id===(id||selectedId));
     if (!cs) return;
     setLoading(true); setError(null); setData(null);
     try {
       const body = cs.id === AUTO_COOKIE_ID ? (forceRefresh ? { forceRefresh: true } : {}) : { AWSALB:cs.AWSALB, AWSALBCORS:cs.AWSALBCORS, JSESSIONID:cs.JSESSIONID };
-      const res = await fetch('/api/my/management', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
-      const json = await res.json() as any;
-      if (!res.ok) setError(json.error);
+      const { res, json } = await fetchManagementJson(body, forceRefresh);
+      if (!res.ok) setError(json.error || `계정 관리 조회 실패 (${res.status})`);
       else { setData(json); if (json.services?.[0]) setOpenService(json.services[0].serviceType); void fetchEmailAliases(); void fetchMaintenanceChecklists(); }
-    } catch (e: any) { setError(e.message); }
+    } catch (e: any) {
+      const message = e?.name === 'AbortError'
+        ? '계정 관리 조회가 70초 안에 끝나지 않았어요. 잠시 후 다시 조회해주세요.'
+        : isTransientFetchError(e)
+          ? '네트워크 요청이 중간에 끊겼어요. 다시 조회를 눌러주세요. 계속 뜨면 화면을 새로고침해주세요.'
+          : (e?.message || '계정 관리 조회 실패');
+      setError(message);
+    }
     finally { setLoading(false); }
   };
 
@@ -664,10 +763,10 @@ export default function ManagePage() {
     for (let i = 0; i < count; i++) {
       try {
         const usidProfileNickname = profileNicknames[i] || generateProfileNickname();
-        const usidMemo = buildAutoFillDeliveryMemo(usidProfileNickname, fillAliasStatus?.memo || fillKeepMemo);
+        const accessEndDateTime = toGraytagDate(fillEndDate);
         const productModel = buildFillProductModel({
           category: fillModal.category,
-          endDate: toGraytagDate(fillEndDate),
+          endDate: accessEndDateTime,
           price: priceNum,
           productName: fillModal.productName,
           serviceType: fillModal.serviceType,
@@ -679,6 +778,26 @@ export default function ManagePage() {
           setFillResult(`등록 실패: ${json.error || '알 수 없는 오류'}`);
           continue;
         }
+
+        const member = buildFillPartyAccessMember({ productUsid: json.productUsid, profileNickname: usidProfileNickname, endDateTime: toGraytagDate(fillEndDate) });
+        const accessRes = await fetch('/api/party-access-links', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            serviceType: fillModal.serviceType,
+            accountEmail: fillModal.keepAcct,
+            fallbackPassword: fillModal.keepPasswd,
+            fallbackPin: fillAliasStatus?.pin || '',
+            profileName: usidProfileNickname,
+            emailAccessUrl: fillAliasStatus?.emailAccessUrl || buildEmailAccessUrl(fillAliasStatus?.emailId),
+            member,
+          }),
+        });
+        const accessJson = await accessRes.json().catch(() => ({})) as any;
+        if (!accessRes.ok || !accessJson.ok || !accessJson.url) {
+          setFillResult(`접근 링크 생성 실패: ${accessJson.error || '알 수 없는 오류'}`);
+          continue;
+        }
+        const usidMemo = buildAutoFillDeliveryMemo(usidProfileNickname, accessJson.url);
 
         // keepAcct 설정
         const deliveryInputError = assertAutoDeliveryInput({ keepAcct: fillModal.keepAcct, keepPasswd: fillModal.keepPasswd, keepMemo: usidMemo });
@@ -984,6 +1103,14 @@ export default function ManagePage() {
                           return true;
                         });
                         const hasOnSale = (data?.onSaleByKeepAcct?.[acct.email]?.length ?? 0) > 0;
+                        const manualForAccount = getManualForAccount(acct.email, acct.serviceType);
+                        const visiblePartyRefs = [
+                          ...filteredMembers.map(m => `graytag:${m.dealUsid}`),
+                          ...manualForAccount.map(mm => `manual:${mm.id}`),
+                        ];
+                        const partyProfileNicknames = generateUniqueProfileNicknames(visiblePartyRefs.length, '', stableRandomFromSeed(`${acct.serviceType}:${acct.email}:party-profiles`));
+                        const profileNicknameByMember = new Map(visiblePartyRefs.map((key, i) => [key, partyProfileNicknames[i] || generateProfileNickname(stableRandomFromSeed(`${acct.serviceType}:${acct.email}:${key}`))]));
+                        const profileNameForMember = (kind: 'graytag' | 'manual', id: string) => profileNicknameByMember.get(`${kind}:${id}`) || generateProfileNickname(stableRandomFromSeed(`${acct.serviceType}:${acct.email}:${kind}:${id}`));
                         const vi = getVacancyInfo(acct);
                         if (filter === 'using' && acct.usingCount === 0 && vi.manualCount === 0 && !acct.generatedAccount) return null;
                         if (filter === 'active' && acct.usingCount === 0 && acct.activeCount === 0 && vi.manualCount === 0 && !hasOnSale && !acct.generatedAccount) return null;
@@ -999,7 +1126,8 @@ export default function ManagePage() {
                         const verifyingCount = acct.members.filter(isAccountCheckingMember).length;
                         const emailAliasId = findEmailAliasId(acct);
                         const credential = findMaintenanceCredentialForAccount(acct);
-                        const credentialKey = `${acct.serviceType}:${acct.email}`;
+                        const credentialKey = accountCredentialKey(acct);
+                        const existingPinRecord = findExistingPinRecordForAccount(acct);
                         const exitChecklist = maintenanceChecklistStore[credentialKey];
                         const credentialRows = [
                           { label: 'ID', value: acct.email },
@@ -1017,7 +1145,10 @@ export default function ManagePage() {
                         });
                         return (
                           <div key={acctKey} style={{ marginBottom:8, background:'#F8F6FF', borderRadius:12, overflow:'hidden' }}>
-                            <button onClick={() => setOpenAccount(isAcctOpen ? null : acctKey)} style={{ width:'100%', display:'flex', alignItems:'center', gap:10, padding:'12px 14px', background:'none', border:'none', cursor:'pointer', fontFamily:'inherit' }}>
+                            <button onClick={() => {
+                              setOpenAccount(isAcctOpen ? null : acctKey);
+                              if (!isAcctOpen) void loadExistingPinForAccount(acct);
+                            }} style={{ width:'100%', display:'flex', alignItems:'center', gap:10, padding:'12px 14px', background:'none', border:'none', cursor:'pointer', fontFamily:'inherit' }}>
                               {/* 슬롯 게이지 */}
                               <div style={{ flexShrink:0, display:'flex', flexDirection:'column', alignItems:'center', gap:3, minWidth:36 }}>
                                 <div style={{ display:'flex', gap:3 }}>
@@ -1157,6 +1288,21 @@ export default function ManagePage() {
                                       </div>
                                     ))}
                                   </div>
+                                  {existingPinRecord?.loading && (
+                                    <div style={{ marginTop:8, background:'#EEF2FF', border:'1px solid #C7D2FE', borderRadius:10, padding:'7px 9px', fontSize:10, color:'#4338CA', fontWeight:900, display:'flex', alignItems:'center', gap:6 }}>
+                                      <Loader2 size={11} style={{ animation:'spin 1s linear infinite' }} /> 기존 PIN 로딩중
+                                    </div>
+                                  )}
+                                  {existingPinRecord?.checked && existingPinRecord.pin && !exitChecklist?.generatedPin && !acct.generatedAccount?.pin && (
+                                    <div style={{ marginTop:8, background:'#ECFDF5', border:'1px solid #A7F3D0', borderRadius:10, padding:'7px 9px', fontSize:10, color:'#047857', fontWeight:900 }}>
+                                      기존 PIN 로드 완료 · Email #{existingPinRecord.emailId || '-'}
+                                    </div>
+                                  )}
+                                  {existingPinRecord?.checked && !existingPinRecord.pin && (
+                                    <div style={{ marginTop:8, background:'#FFFBEB', border:'1px solid #FDE68A', borderRadius:10, padding:'7px 9px', fontSize:10, color:'#92400E', fontWeight:900 }}>
+                                      {existingPinRecord.message || '기존 PIN 없음'}
+                                    </div>
+                                  )}
                                   <div style={{ marginTop:9, background:'#F8F6FF', borderRadius:12, padding:9, display:'grid', gridTemplateColumns:'1fr auto', gap:7, alignItems:'center' }}>
                                     <input value={currentPasswordDraft} onChange={(e) => setPasswordDrafts(prev => ({ ...prev, [credentialKey]: e.target.value }))} placeholder="최신 비밀번호 입력" style={{ border:'1px solid #EDE9FE', borderRadius:10, padding:'8px 10px', fontSize:11, fontWeight:800, color:'#1E1B4B', fontFamily:'inherit', minWidth:0 }} />
                                     <button onClick={(e) => { e.stopPropagation(); handleSaveLatestPassword(acct); }} disabled={passwordSaveLoadingKey === credentialKey} style={{ border:'none', borderRadius:999, padding:'8px 10px', background:passwordSaveLoadingKey === credentialKey ? '#C4B5FD' : '#10B981', color:'#fff', fontSize:10, fontWeight:900, cursor:passwordSaveLoadingKey === credentialKey ? 'not-allowed' : 'pointer' }}>
@@ -1211,19 +1357,24 @@ export default function ManagePage() {
                                       </div>
                                     </div>
                                     <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:7 }}>
+                                      <div style={{ background:'#fff', borderRadius:10, padding:'8px 9px' }}><div style={{ fontSize:9, color:'#9CA3AF', fontWeight:800 }}>ID</div><div style={{ fontSize:12, color:'#1E1B4B', fontWeight:900, marginTop:2, wordBreak:'break-all' }}>{acct.generatedAccount.id}</div></div>
                                       <div style={{ background:'#fff', borderRadius:10, padding:'8px 9px' }}><div style={{ fontSize:9, color:'#9CA3AF', fontWeight:800 }}>비밀번호</div><div style={{ fontSize:12, color:'#1E1B4B', fontWeight:900, marginTop:2 }}>{acct.keepPasswd || '-'}</div></div>
                                       <div style={{ background:'#fff', borderRadius:10, padding:'8px 9px' }}><div style={{ fontSize:9, color:'#9CA3AF', fontWeight:800 }}>PIN</div><div style={{ fontSize:12, color:'#1E1B4B', fontWeight:900, marginTop:2 }}>{acct.generatedAccount.pin}</div></div>
+                                      <div style={{ background:'#fff', borderRadius:10, padding:'8px 9px' }}><div style={{ fontSize:9, color:'#9CA3AF', fontWeight:800 }}>상태</div><div style={{ fontSize:12, color:acct.generatedAccount.paymentStatus==='paid'?'#059669':'#C2410C', fontWeight:900, marginTop:2 }}>{acct.generatedAccount.paymentStatus==='paid'?'결제/가입 완료':'결제/가입 대기'}</div></div>
                                     </div>
-                                    <div style={{ fontSize:10, color:'#C2410C', marginTop:8, lineHeight:1.35 }}>다음 단계: 이 계정으로 티빙·웨이브 가입/결제 → Y 표시 → 아래 생성계정 게시글 작성으로 바로 모집글을 올리세요.</div>
+                                    {isGeneratedPending && <div style={{ fontSize:10, color:'#C2410C', marginTop:8, lineHeight:1.35 }}>다음 단계: 이 계정으로 티빙·웨이브 가입/결제 → Y 표시 → 아래 생성계정 게시글 작성으로 바로 모집글을 올리세요.</div>}
                                   </div>
                                 )}
+
                                 {filteredMembers.length === 0 ? (
                                   <div style={{ fontSize:12, color:'#9CA3AF', textAlign:'center', padding:'8px 0' }}>해당 조건의 파티원 없음</div>
                                 ) : filteredMembers.map((m, idx) => {
                                   const b = bge(m.status, m.statusName);
                                   const isVerifying = isAccountCheckingMember(m);
                                   const isUsing = USING_SET.has(m.status);
-                                  const memberAccessKey = `${acct.serviceType}:${acct.email}:graytag:${m.dealUsid}`;
+                                  const memberAccessKey = `${acct.serviceType}:${acct.email}:graytag:${m.dealUsid}:url`;
+                                  const memberTemplateKey = `${acct.serviceType}:${acct.email}:graytag:${m.dealUsid}:template`;
+                                  const assignedProfileName = profileNameForMember('graytag', m.dealUsid);
                                   const circleBg = isVerifying ? '#2563EB' : isUsing ? '#A78BFA' : ACTIVE_SET.has(m.status) ? '#C4B5FD' : '#E9E4FF';
                                   const circleColor = (isVerifying || isUsing || ACTIVE_SET.has(m.status)) ? '#fff' : '#9CA3AF';
                                   return (
@@ -1235,11 +1386,16 @@ export default function ManagePage() {
                                           <span style={{ fontSize:10, fontWeight:600, color:b.color, background:b.bg, borderRadius:6, padding:'2px 7px' }}>{b.label}</span>
                                         </div>
                                         {(m.startDateTime||m.endDateTime) && <div style={{ fontSize:11, color:'#9CA3AF', marginTop:2 }}>{m.startDateTime&&fmtDate(m.startDateTime)}{m.startDateTime&&m.endDateTime&&' ~ '}{m.endDateTime&&fmtDate(m.endDateTime)}{m.remainderDays>0&&` (${m.remainderDays}일)`}</div>}
+                                        <div style={{ fontSize:10, color:'#4F46E5', fontWeight:900, marginTop:3 }}>배정 프로필: {assignedProfileName}</div>
                                         <div style={{ marginTop:5, display:'flex', alignItems:'center', gap:5, flexWrap:'wrap' }}>
-                                          <button onClick={(e) => { e.stopPropagation(); createPartyAccessLink(acct, { kind:'graytag', memberId:m.dealUsid, memberName:m.name || '(미확인)', status:m.status, statusName:m.statusName, startDateTime:m.startDateTime, endDateTime:m.endDateTime }); }} disabled={accessLinkLoadingKey === memberAccessKey} style={{ border:'none', borderRadius:999, background:accessLinkLoadingKey === memberAccessKey ? '#C4B5FD' : '#EEF2FF', color:'#4F46E5', padding:'4px 8px', fontSize:9, fontWeight:900, cursor:accessLinkLoadingKey === memberAccessKey ? 'not-allowed' : 'pointer' }}>
+                                          <button onClick={(e) => { e.stopPropagation(); createPartyAccessLink(acct, { kind:'graytag', memberId:m.dealUsid, memberName:m.name || '(미확인)', profileName:assignedProfileName, status:m.status, statusName:m.statusName, startDateTime:m.startDateTime, endDateTime:m.endDateTime }); }} disabled={accessLinkLoadingKey === memberAccessKey} style={{ border:'none', borderRadius:999, background:accessLinkLoadingKey === memberAccessKey ? '#C4B5FD' : '#EEF2FF', color:'#4F46E5', padding:'4px 8px', fontSize:9, fontWeight:900, cursor:accessLinkLoadingKey === memberAccessKey ? 'not-allowed' : 'pointer' }}>
                                             {accessLinkLoadingKey === memberAccessKey ? '생성중' : '접근 링크 만들기'}
                                           </button>
+                                          <button onClick={(e) => { e.stopPropagation(); createPartyAccessLink(acct, { kind:'graytag', memberId:m.dealUsid, memberName:m.name || '(미확인)', profileName:assignedProfileName, status:m.status, statusName:m.statusName, startDateTime:m.startDateTime, endDateTime:m.endDateTime }, 'template'); }} disabled={accessLinkLoadingKey === memberTemplateKey} style={{ border:'none', borderRadius:999, background:accessLinkLoadingKey === memberTemplateKey ? '#C4B5FD' : '#F5F3FF', color:'#7C3AED', padding:'4px 8px', fontSize:9, fontWeight:900, cursor:accessLinkLoadingKey === memberTemplateKey ? 'not-allowed' : 'pointer' }}>
+                                            {accessLinkLoadingKey === memberTemplateKey ? '복사중' : '수동 전달 템플릿 복사'}
+                                          </button>
                                           {accessLinkResult?.key === memberAccessKey && <span style={{ fontSize:9, color:'#059669', fontWeight:900 }}>파티원 전용 계정정보 링크 복사됨</span>}
+                                          {accessLinkResult?.key === memberTemplateKey && <span style={{ fontSize:9, color:'#059669', fontWeight:900 }}>수동 전달 템플릿 복사됨</span>}
                                         </div>
                                         {isUsing && m.progressRatio && m.progressRatio!=='0%' && (
                                           <div style={{ marginTop:5 }}>
@@ -1264,7 +1420,7 @@ export default function ManagePage() {
                                 })}
                                 {/* ─── 수동 파티원 목록 ────────────────────── */}
                                 {(() => {
-                                  const manuals = getManualForAccount(acct.email, acct.serviceType);
+                                  const manuals = manualForAccount;
                                   if (manuals.length === 0 && filter === 'using') return null;
                                   return (
                                     <>
@@ -1281,7 +1437,9 @@ export default function ManagePage() {
                                             const now = new Date(); now.setHours(0,0,0,0);
                                             const remainDays = Math.max(0, Math.ceil((e.getTime()-now.getTime())/86400000));
                                             const isExpired = mm.status === 'expired' || remainDays <= 0;
-                                            const manualAccessKey = `${acct.serviceType}:${acct.email}:manual:${mm.id}`;
+                                            const manualAccessKey = `${acct.serviceType}:${acct.email}:manual:${mm.id}:url`;
+                                            const manualTemplateKey = `${acct.serviceType}:${acct.email}:manual:${mm.id}:template`;
+                                            const assignedProfileName = profileNameForMember('manual', mm.id);
                                             return (
                                               <div key={mm.id} style={{ display:'flex', alignItems:'flex-start', gap:10, padding:'9px 0', borderBottom:'1px solid #F3F0FF', opacity: isExpired?0.5:1 }}>
                                                 <div style={{ width:26, height:26, borderRadius:8, flexShrink:0, background: isExpired?'#E9E4FF':'#10B981', display:'flex', alignItems:'center', justifyContent:'center', marginTop:2 }}>
@@ -1303,11 +1461,16 @@ export default function ManagePage() {
                                                     {mm.startDate.replace(/-/g,'/')} ~ {mm.endDate.replace(/-/g,'/')}
                                                     {!isExpired && remainDays > 0 && ` (${remainDays}일 남음)`}
                                                   </div>
+                                                  <div style={{ fontSize:10, color:'#059669', fontWeight:900, marginTop:3 }}>배정 프로필: {assignedProfileName}</div>
                                                   <div style={{ marginTop:5, display:'flex', alignItems:'center', gap:5, flexWrap:'wrap' }}>
-                                                    <button onClick={(ev) => { ev.stopPropagation(); createPartyAccessLink(acct, { kind:'manual', memberId:mm.id, memberName:mm.memberName, status:mm.status, statusName:mm.status, startDateTime:mm.startDate, endDateTime:mm.endDate }); }} disabled={accessLinkLoadingKey === manualAccessKey || isExpired} style={{ border:'none', borderRadius:999, background:(accessLinkLoadingKey === manualAccessKey || isExpired) ? '#F3F4F6' : '#EEF2FF', color:isExpired ? '#9CA3AF' : '#4F46E5', padding:'4px 8px', fontSize:9, fontWeight:900, cursor:(accessLinkLoadingKey === manualAccessKey || isExpired) ? 'not-allowed' : 'pointer' }}>
+                                                    <button onClick={(ev) => { ev.stopPropagation(); createPartyAccessLink(acct, { kind:'manual', memberId:mm.id, memberName:mm.memberName, profileName:assignedProfileName, status:mm.status, statusName:mm.status, startDateTime:mm.startDate, endDateTime:mm.endDate }); }} disabled={accessLinkLoadingKey === manualAccessKey || isExpired} style={{ border:'none', borderRadius:999, background:(accessLinkLoadingKey === manualAccessKey || isExpired) ? '#F3F4F6' : '#EEF2FF', color:isExpired ? '#9CA3AF' : '#4F46E5', padding:'4px 8px', fontSize:9, fontWeight:900, cursor:(accessLinkLoadingKey === manualAccessKey || isExpired) ? 'not-allowed' : 'pointer' }}>
                                                       {accessLinkLoadingKey === manualAccessKey ? '생성중' : '접근 링크 만들기'}
                                                     </button>
+                                                    <button onClick={(ev) => { ev.stopPropagation(); createPartyAccessLink(acct, { kind:'manual', memberId:mm.id, memberName:mm.memberName, profileName:assignedProfileName, status:mm.status, statusName:mm.status, startDateTime:mm.startDate, endDateTime:mm.endDate }, 'template'); }} disabled={accessLinkLoadingKey === manualTemplateKey || isExpired} style={{ border:'none', borderRadius:999, background:(accessLinkLoadingKey === manualTemplateKey || isExpired) ? '#F3F4F6' : '#ECFDF5', color:isExpired ? '#9CA3AF' : '#059669', padding:'4px 8px', fontSize:9, fontWeight:900, cursor:(accessLinkLoadingKey === manualTemplateKey || isExpired) ? 'not-allowed' : 'pointer' }}>
+                                                      {accessLinkLoadingKey === manualTemplateKey ? '복사중' : '수동 전달 템플릿 복사'}
+                                                    </button>
                                                     {accessLinkResult?.key === manualAccessKey && <span style={{ fontSize:9, color:'#059669', fontWeight:900 }}>파티원 전용 계정정보 링크 복사됨</span>}
+                                                    {accessLinkResult?.key === manualTemplateKey && <span style={{ fontSize:9, color:'#059669', fontWeight:900 }}>수동 전달 템플릿 복사됨</span>}
                                                   </div>
                                                   {mm.memo && <div style={{ fontSize:10, color:'#C4B5FD', marginTop:2 }}>{mm.memo}</div>}
                                                 </div>
@@ -1355,11 +1518,9 @@ export default function ManagePage() {
 
                                     const autoPasswd = refOnSale?.keepPasswd || acct.keepPasswd || findPasswdByEmail(acct.email, acct.serviceType, vi.onSaleList);
 
-                                    // keepMemo: Email Dashboard exact alias/PIN 조회 성공 시에만 자동 등록 허용
-                                    const existingMemo = refOnSale?.keepMemo || '';
-
+                                    // keepMemo: 계정 접근 링크 템플릿을 기본값으로 둔 뒤 Email Dashboard alias/PIN 존재 여부만 확인
                                     const fillNickname = generateProfileNickname();
-                                    const fallbackDeliveryMemo = existingMemo ? buildAutoFillDeliveryMemo(fillNickname, existingMemo) : '';
+                                    const fallbackDeliveryMemo = buildAutoFillDeliveryMemo(fillNickname, PARTY_ACCESS_URL_PLACEHOLDER);
                                     setFillProfileNickname(fillNickname);
 
                                     // endDateTime: OnSale 게시글 > 이용중 파티원의 endDateTime
@@ -1540,7 +1701,7 @@ export default function ManagePage() {
                 onChange={e => {
                   const nickname = normalizeProfileNickname(e.target.value);
                   setFillProfileNickname(nickname);
-                  const nextMemo = buildAutoFillDeliveryMemo(nickname, fillKeepMemo);
+                  const nextMemo = buildAutoFillDeliveryMemo(nickname, PARTY_ACCESS_URL_PLACEHOLDER);
                   setFillKeepMemo(nextMemo);
                   if (fillAliasStatus?.ok) setFillAliasStatus({ ...fillAliasStatus, memo: nextMemo });
                 }}
@@ -1548,7 +1709,7 @@ export default function ManagePage() {
               <button onClick={() => {
                 const nickname = generateProfileNickname();
                 setFillProfileNickname(nickname);
-                const nextMemo = buildAutoFillDeliveryMemo(nickname, fillKeepMemo);
+                const nextMemo = buildAutoFillDeliveryMemo(nickname, PARTY_ACCESS_URL_PLACEHOLDER);
                 setFillKeepMemo(nextMemo);
                 if (fillAliasStatus?.ok) setFillAliasStatus({ ...fillAliasStatus, memo: nextMemo });
               }} style={{ border:'none', borderRadius:10, padding:'0 12px', background:'#EDE9FE', color:'#7C3AED', fontSize:12, fontWeight:800, cursor:'pointer', fontFamily:'inherit' }}>
@@ -1556,7 +1717,7 @@ export default function ManagePage() {
               </button>
             </div>
             <div style={{ background:'#FFFBEB', border:'1px solid #FDE68A', borderRadius:10, padding:'8px 10px', marginBottom:10, fontSize:11, color:'#92400E', fontWeight:700 }}>
-              ⚠️ 1인 1프로필 안내 3회 반복 문구가 전달 메모 맨 위에 자동으로 들어갑니다.
+                  ✅ 계정 접근 링크는 등록할 때 게시글마다 실제 주소로 자동 생성됩니다. 아래 미리보기의 {'{계정 접근 토큰 생성 주소}'} 자리에는 실제 access 주소가 들어갑니다.
             </div>
 
             <label style={{ display:'block', fontSize:12, fontWeight:700, color:'#6B7280', marginBottom:6 }}>추가 안내 (계정 전달 메모)</label>

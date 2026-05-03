@@ -3388,6 +3388,8 @@ function partyAccessShareUrl(c: any, token: string): string {
 }
 
 function publicPartyAccessResponse(c: any, payload: ReturnType<typeof buildPartyAccessPublicPayload>) {
+  c.header('Cache-Control', 'no-store, max-age=0');
+  c.header('Pragma', 'no-cache');
   if (!payload.ok) return c.json(payload, payload.reason === 'not-found' ? 404 : 403);
   return c.json(payload);
 }
@@ -3639,6 +3641,8 @@ app.post('/party-access-links', async (c) => {
     accountEmail,
     fallbackPassword: String(body.fallbackPassword || ''),
     fallbackPin: String(body.fallbackPin || ''),
+    profileName: String(body.profileName || member.profileName || member.memberName || '(미확인)'),
+    emailAccessUrl: String(body.emailAccessUrl || ''),
     member: {
       kind: member.kind === 'manual' ? 'manual' : 'graytag',
       memberId: String(member.memberId || ''),

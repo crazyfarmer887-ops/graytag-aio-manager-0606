@@ -34,6 +34,29 @@ describe('resolveEmailAliasFill tving aliases', () => {
     expect(result.memo).toContain('핀번호는 : 123456입니다!');
   });
 
+  test('binds a 티빙 gtwavve account to the same-number Wavve alias before generic service fallback', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'alias-pins-'));
+    const pinPath = join(dir, 'alias-pins.json');
+    writeFileSync(pinPath, JSON.stringify({
+      100: { pin: '777777' },
+      999: { pin: '999999' },
+    }));
+    process.env.EMAIL_ALIAS_PIN_STORE_PATH = pinPath;
+
+    const result = await resolveEmailAliasFill({
+      accountEmail: 'gtwavve7',
+      serviceType: '티빙',
+      aliases: [
+        { id: 100, email: 'wavve7.example@aleeas.com', enabled: true },
+        { id: 999, email: 'wavve99.example@aleeas.com', enabled: true },
+      ],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.emailId).toBe(100);
+    expect(result.pin).toBe('777777');
+  });
+
   test('verifies the selected email dashboard alias PIN really changed after update', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'alias-pins-'));
     const pinPath = join(dir, 'alias-pins.json');
