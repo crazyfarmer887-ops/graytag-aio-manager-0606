@@ -40,6 +40,9 @@ describe('auto reply API', () => {
     process.env.AUTO_REPLY_DRAFT_ONLY = 'true';
     process.env.AUTO_REPLY_USE_HERMES = 'false';
     process.env.AUTO_REPLY_ENABLE_SEND = 'false';
+    process.env.SELLER_ALERT_TELEGRAM_BOT_TOKEN = 'test-bot-token';
+    process.env.SELLER_ALERT_TELEGRAM_CHAT_ID = 'test-chat-id';
+    process.env.SELLER_ALERT_TELEGRAM_DRY_RUN = 'true';
   });
 
   afterEach(() => {
@@ -50,6 +53,9 @@ describe('auto reply API', () => {
     delete process.env.AUTO_REPLY_DRAFT_ONLY;
     delete process.env.AUTO_REPLY_USE_HERMES;
     delete process.env.AUTO_REPLY_ENABLE_SEND;
+    delete process.env.SELLER_ALERT_TELEGRAM_BOT_TOKEN;
+    delete process.env.SELLER_ALERT_TELEGRAM_CHAT_ID;
+    delete process.env.SELLER_ALERT_TELEGRAM_DRY_RUN;
   });
 
   test('requires admin auth for auto-reply log', async () => {
@@ -72,6 +78,10 @@ describe('auto reply API', () => {
     expect(json.newJobs).toBe(1);
     expect(json.drafted).toBe(1);
     expect(json.sent).toBe(0);
+
+    const log = await authed('/chat/auto-reply-log?limit=1');
+    const data = await log.json() as any;
+    expect(data.jobs[0].telegramAlertSentAt).toBeTruthy();
   });
 
   test('tick skips an already drafted fingerprint instead of reprocessing it', async () => {

@@ -88,6 +88,12 @@ export async function sendSellerAlert(input: SellerAlertInput): Promise<SellerAl
   const text = buildText(input);
   const body = JSON.stringify({ chat_id: chatId, text, disable_web_page_preview: true });
 
+  if (env('SELLER_ALERT_TELEGRAM_DRY_RUN') === 'true') {
+    sentAtByKey[key] = nowMs;
+    saveState(statePath, { sentAtByKey });
+    return { sent: true, reason: 'sent' };
+  }
+
   if (fetcher) {
     try {
       const res = await fetcher(`https://api.telegram.org/bot${encodeURIComponent(botToken)}/sendMessage`, {

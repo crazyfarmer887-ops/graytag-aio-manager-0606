@@ -19,6 +19,7 @@ export interface AutoReplyJob {
   risk?: AutoReplyRisk;
   draftReply?: string;
   blockReason?: string;
+  telegramAlertSentAt?: string;
   hermesSessionId?: string;
   createdAt: string;
   updatedAt: string;

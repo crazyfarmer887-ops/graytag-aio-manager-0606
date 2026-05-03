@@ -1726,6 +1726,29 @@ async function notifyAutoReplyHuman(job: any, reason: string, severity: 'warning
   });
 }
 
+async function notifyAutoReplyDraft(job: any, draftReply: string, reason: string) {
+  if (job.telegramAlertSentAt) return;
+  const result = await sendSellerAlert({
+    key: `auto-reply-draft-${job.id}`,
+    title: '새 구매자 메시지 · AI 초안',
+    body: [
+      `구매자: ${job.buyerName || '구매자'}`,
+      `상품: ${job.productType || '기타'} ${job.productName || ''}`.trim(),
+      `문의:
+${String(job.buyerMessage || '').slice(0, 800)}`,
+      draftReply ? `AI 초안:
+${String(draftReply || '').slice(0, 1200)}` : '',
+      `상태: ${reason}`,
+      '대시보드: 채팅 > 자동응답 큐에서 보내기/수정하기',
+    ].filter(Boolean).join('\n\n'),
+    severity: job.risk === 'high' ? 'critical' : 'warning',
+    throttleMs: 0,
+  });
+  if (result.sent) {
+    updateAutoReplyJobPersisted(AUTO_REPLY_MEMORY_STORE, job.id, { telegramAlertSentAt: new Date().toISOString() });
+  }
+}
+
 async function processAutoReplyJob(job: any, dryRun: boolean) {
   const route = routeAutoReply(job.buyerMessage);
   updateAutoReplyJobPersisted(AUTO_REPLY_MEMORY_STORE, job.id, { category: route.category, risk: route.risk });
@@ -1779,13 +1802,14 @@ async function processAutoReplyJob(job: any, dryRun: boolean) {
 
   const shouldSend = !dryRun && safety.allowed && process.env.AUTO_REPLY_ENABLE_SEND === 'true';
   if (!shouldSend) {
-    updateAutoReplyJobPersisted(AUTO_REPLY_MEMORY_STORE, job.id, {
+    const updatedJob = updateAutoReplyJobPersisted(AUTO_REPLY_MEMORY_STORE, job.id, {
       status: autonomous.notifyHuman ? 'blocked' : 'drafted',
       draftReply: autonomous.reply,
       blockReason: dryRun ? 'dry-run' : (safety.allowed ? 'AUTO_REPLY_ENABLE_SEND 꺼짐' : safety.reason),
       category: route.category,
       risk: autonomous.notifyHuman ? 'high' : finalHermes.risk,
     });
+    await notifyAutoReplyDraft(updatedJob, autonomous.reply, dryRun ? 'dry-run' : (safety.allowed ? '발송 꺼짐 · 초안만 생성' : safety.reason));
     return { status: autonomous.notifyHuman ? 'blocked' : 'drafted' };
   }
 
