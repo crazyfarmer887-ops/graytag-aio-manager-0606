@@ -231,6 +231,10 @@ export default function ManagePage() {
   const [maintenanceChecklistStore, setMaintenanceChecklistStore] = useState<PartyMaintenanceChecklistStore>({});
   const [pinResetLoadingKey, setPinResetLoadingKey] = useState<string | null>(null);
   const [pinResetNoticeKey, setPinResetNoticeKey] = useState<string | null>(null);
+  const [passwordDrafts, setPasswordDrafts] = useState<Record<string, string>>({});
+  const [passwordSaveLoadingKey, setPasswordSaveLoadingKey] = useState<string | null>(null);
+  const [accessLinkLoadingKey, setAccessLinkLoadingKey] = useState<string | null>(null);
+  const [accessLinkResult, setAccessLinkResult] = useState<{ key: string; url: string } | null>(null);
 
   const fetchEmailAliases = async () => {
     try {
@@ -293,6 +297,69 @@ export default function ManagePage() {
       alert(e.message || 'PIN 번호 재설정 실패');
     } finally {
       setPinResetLoadingKey(null);
+    }
+  };
+
+  const handleSaveLatestPassword = async (acct: Account) => {
+    const key = `${acct.serviceType}:${acct.email}`;
+    const nextPassword = (passwordDrafts[key] ?? findMaintenanceCredentialForAccount(acct)?.password ?? '').trim();
+    if (!nextPassword) { alert('저장할 비밀번호를 입력해주세요.'); return; }
+    setPasswordSaveLoadingKey(key);
+    try {
+      const res = await fetch(`/api/party-maintenance-checklists/${encodeURIComponent(key)}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ recruitAgain: true, passwordChanged: true, changedPassword: nextPassword }),
+      });
+      const json = await res.json() as any;
+      if (!res.ok || !json.ok) throw new Error(json.error || '최신 비밀번호 저장 실패');
+      setMaintenanceChecklistStore(json.store || { ...maintenanceChecklistStore, [key]: json.item });
+      setPasswordDrafts(prev => ({ ...prev, [key]: nextPassword }));
+      setPinResetNoticeKey(key);
+    } catch (e: any) {
+      alert(e.message || '최신 비밀번호 저장 실패');
+    } finally {
+      setPasswordSaveLoadingKey(null);
+    }
+  };
+
+  const updateAccountExitChecklist = async (acct: Account, patch: Record<string, unknown>) => {
+    const key = `${acct.serviceType}:${acct.email}`;
+    try {
+      const res = await fetch(`/api/party-maintenance-checklists/${encodeURIComponent(key)}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ recruitAgain: true, ...patch }),
+      });
+      const json = await res.json() as any;
+      if (!res.ok || !json.ok) throw new Error(json.error || '퇴장 체크리스트 저장 실패');
+      setMaintenanceChecklistStore(json.store || { ...maintenanceChecklistStore, [key]: json.item });
+    } catch (e: any) {
+      alert(e.message || '퇴장 체크리스트 저장 실패');
+    }
+  };
+
+  const createPartyAccessLink = async (acct: Account, member: { kind: 'graytag' | 'manual'; memberId: string; memberName: string; status: string; statusName?: string; startDateTime?: string | null; endDateTime?: string | null }) => {
+    const key = `${acct.serviceType}:${acct.email}:${member.kind}:${member.memberId}`;
+    const credential = findMaintenanceCredentialForAccount(acct);
+    setAccessLinkLoadingKey(key);
+    try {
+      const res = await fetch('/api/party-access-links', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          serviceType: acct.serviceType,
+          accountEmail: acct.email,
+          fallbackPassword: credential?.password || acct.keepPasswd || '',
+          fallbackPin: credential?.pin || acct.generatedAccount?.pin || '',
+          member,
+        }),
+      });
+      const json = await res.json() as any;
+      if (!res.ok || !json.ok || !json.url) throw new Error(json.error || '접근 링크 만들기 실패');
+      await copyText(json.url);
+      setAccessLinkResult({ key, url: json.url });
+    } catch (e: any) {
+      alert(e.message || '접근 링크 만들기 실패');
+    } finally {
+      setAccessLinkLoadingKey(null);
     }
   };
 
@@ -933,11 +1000,13 @@ export default function ManagePage() {
                         const emailAliasId = findEmailAliasId(acct);
                         const credential = findMaintenanceCredentialForAccount(acct);
                         const credentialKey = `${acct.serviceType}:${acct.email}`;
+                        const exitChecklist = maintenanceChecklistStore[credentialKey];
                         const credentialRows = [
                           { label: 'ID', value: acct.email },
                           { label: 'PW', value: credential?.password || acct.keepPasswd || '' },
                           { label: 'PIN', value: credential?.pin || '' },
                         ];
+                        const currentPasswordDraft = passwordDrafts[credentialKey] ?? credentialRows[1].value;
                         const slotStates = buildAccountSlotStates({
                           totalSlots,
                           usingCount: acct.usingCount,
@@ -1088,6 +1157,12 @@ export default function ManagePage() {
                                       </div>
                                     ))}
                                   </div>
+                                  <div style={{ marginTop:9, background:'#F8F6FF', borderRadius:12, padding:9, display:'grid', gridTemplateColumns:'1fr auto', gap:7, alignItems:'center' }}>
+                                    <input value={currentPasswordDraft} onChange={(e) => setPasswordDrafts(prev => ({ ...prev, [credentialKey]: e.target.value }))} placeholder="최신 비밀번호 입력" style={{ border:'1px solid #EDE9FE', borderRadius:10, padding:'8px 10px', fontSize:11, fontWeight:800, color:'#1E1B4B', fontFamily:'inherit', minWidth:0 }} />
+                                    <button onClick={(e) => { e.stopPropagation(); handleSaveLatestPassword(acct); }} disabled={passwordSaveLoadingKey === credentialKey} style={{ border:'none', borderRadius:999, padding:'8px 10px', background:passwordSaveLoadingKey === credentialKey ? '#C4B5FD' : '#10B981', color:'#fff', fontSize:10, fontWeight:900, cursor:passwordSaveLoadingKey === credentialKey ? 'not-allowed' : 'pointer' }}>
+                                      {passwordSaveLoadingKey === credentialKey ? '저장중' : '최신 비밀번호 저장'}
+                                    </button>
+                                  </div>
                                   {pinResetNoticeKey === credentialKey && (
                                     <div style={{ marginTop:9, background:'#FFF7ED', border:'1.5px solid #FED7AA', borderRadius:12, padding:'9px 10px', display:'flex', alignItems:'center', justifyContent:'space-between', gap:8 }}>
                                       <div style={{ fontSize:11, color:'#9A3412', fontWeight:900 }}>변경된 핀번호를 다른 사람들에게 전달했나요?</div>
@@ -1097,6 +1172,23 @@ export default function ManagePage() {
                                       </div>
                                     </div>
                                   )}
+                                </div>
+
+                                <div style={{ background:'#FFFFFF', border:'1.5px solid #EDE9FE', borderRadius:14, padding:12, marginBottom:10 }}>
+                                  <div style={{ fontSize:13, fontWeight:900, color:'#1E1B4B', marginBottom:7 }}>퇴장 정리 체크리스트</div>
+                                  <div style={{ fontSize:10, color:'#9CA3AF', marginBottom:8 }}>파티원이 나갔을 때 프로필/기기/PW/PIN/공지 상태를 계정별로 표시해요.</div>
+                                  <div style={{ display:'flex', flexWrap:'wrap', gap:6 }}>
+                                    {([
+                                      ['프로필 삭제', 'profileRemoved', true],
+                                      ['기기 로그아웃', 'devicesLoggedOut', true],
+                                      ['PW 변경', 'passwordChanged', true],
+                                      ['PIN 변경', 'pinStillUnchanged', false],
+                                      ['남은 파티원 공지', 'noticeSent', true],
+                                    ] as const).map(([label, field, doneValue]) => {
+                                      const done = (exitChecklist as any)?.[field] === doneValue;
+                                      return <button key={field} onClick={(e) => { e.stopPropagation(); updateAccountExitChecklist(acct, { [field]: doneValue }); }} style={{ border:'none', borderRadius:999, padding:'6px 9px', background:done?'#ECFDF5':'#F3F4F6', color:done?'#059669':'#6B7280', fontSize:10, fontWeight:900, cursor:'pointer' }}>{done ? '✓ ' : ''}{label}</button>;
+                                    })}
+                                  </div>
                                 </div>
 
                                 {acct.generatedAccount && (
@@ -1131,6 +1223,7 @@ export default function ManagePage() {
                                   const b = bge(m.status, m.statusName);
                                   const isVerifying = isAccountCheckingMember(m);
                                   const isUsing = USING_SET.has(m.status);
+                                  const memberAccessKey = `${acct.serviceType}:${acct.email}:graytag:${m.dealUsid}`;
                                   const circleBg = isVerifying ? '#2563EB' : isUsing ? '#A78BFA' : ACTIVE_SET.has(m.status) ? '#C4B5FD' : '#E9E4FF';
                                   const circleColor = (isVerifying || isUsing || ACTIVE_SET.has(m.status)) ? '#fff' : '#9CA3AF';
                                   return (
@@ -1142,6 +1235,12 @@ export default function ManagePage() {
                                           <span style={{ fontSize:10, fontWeight:600, color:b.color, background:b.bg, borderRadius:6, padding:'2px 7px' }}>{b.label}</span>
                                         </div>
                                         {(m.startDateTime||m.endDateTime) && <div style={{ fontSize:11, color:'#9CA3AF', marginTop:2 }}>{m.startDateTime&&fmtDate(m.startDateTime)}{m.startDateTime&&m.endDateTime&&' ~ '}{m.endDateTime&&fmtDate(m.endDateTime)}{m.remainderDays>0&&` (${m.remainderDays}일)`}</div>}
+                                        <div style={{ marginTop:5, display:'flex', alignItems:'center', gap:5, flexWrap:'wrap' }}>
+                                          <button onClick={(e) => { e.stopPropagation(); createPartyAccessLink(acct, { kind:'graytag', memberId:m.dealUsid, memberName:m.name || '(미확인)', status:m.status, statusName:m.statusName, startDateTime:m.startDateTime, endDateTime:m.endDateTime }); }} disabled={accessLinkLoadingKey === memberAccessKey} style={{ border:'none', borderRadius:999, background:accessLinkLoadingKey === memberAccessKey ? '#C4B5FD' : '#EEF2FF', color:'#4F46E5', padding:'4px 8px', fontSize:9, fontWeight:900, cursor:accessLinkLoadingKey === memberAccessKey ? 'not-allowed' : 'pointer' }}>
+                                            {accessLinkLoadingKey === memberAccessKey ? '생성중' : '접근 링크 만들기'}
+                                          </button>
+                                          {accessLinkResult?.key === memberAccessKey && <span style={{ fontSize:9, color:'#059669', fontWeight:900 }}>파티원 전용 계정정보 링크 복사됨</span>}
+                                        </div>
                                         {isUsing && m.progressRatio && m.progressRatio!=='0%' && (
                                           <div style={{ marginTop:5 }}>
                                             <div style={{ display:'flex', justifyContent:'space-between', fontSize:10, color:'#9CA3AF', marginBottom:2 }}><span>진행률</span><span>{m.progressRatio}</span></div>
@@ -1182,6 +1281,7 @@ export default function ManagePage() {
                                             const now = new Date(); now.setHours(0,0,0,0);
                                             const remainDays = Math.max(0, Math.ceil((e.getTime()-now.getTime())/86400000));
                                             const isExpired = mm.status === 'expired' || remainDays <= 0;
+                                            const manualAccessKey = `${acct.serviceType}:${acct.email}:manual:${mm.id}`;
                                             return (
                                               <div key={mm.id} style={{ display:'flex', alignItems:'flex-start', gap:10, padding:'9px 0', borderBottom:'1px solid #F3F0FF', opacity: isExpired?0.5:1 }}>
                                                 <div style={{ width:26, height:26, borderRadius:8, flexShrink:0, background: isExpired?'#E9E4FF':'#10B981', display:'flex', alignItems:'center', justifyContent:'center', marginTop:2 }}>
@@ -1202,6 +1302,12 @@ export default function ManagePage() {
                                                   <div style={{ fontSize:11, color:'#9CA3AF', marginTop:2 }}>
                                                     {mm.startDate.replace(/-/g,'/')} ~ {mm.endDate.replace(/-/g,'/')}
                                                     {!isExpired && remainDays > 0 && ` (${remainDays}일 남음)`}
+                                                  </div>
+                                                  <div style={{ marginTop:5, display:'flex', alignItems:'center', gap:5, flexWrap:'wrap' }}>
+                                                    <button onClick={(ev) => { ev.stopPropagation(); createPartyAccessLink(acct, { kind:'manual', memberId:mm.id, memberName:mm.memberName, status:mm.status, statusName:mm.status, startDateTime:mm.startDate, endDateTime:mm.endDate }); }} disabled={accessLinkLoadingKey === manualAccessKey || isExpired} style={{ border:'none', borderRadius:999, background:(accessLinkLoadingKey === manualAccessKey || isExpired) ? '#F3F4F6' : '#EEF2FF', color:isExpired ? '#9CA3AF' : '#4F46E5', padding:'4px 8px', fontSize:9, fontWeight:900, cursor:(accessLinkLoadingKey === manualAccessKey || isExpired) ? 'not-allowed' : 'pointer' }}>
+                                                      {accessLinkLoadingKey === manualAccessKey ? '생성중' : '접근 링크 만들기'}
+                                                    </button>
+                                                    {accessLinkResult?.key === manualAccessKey && <span style={{ fontSize:9, color:'#059669', fontWeight:900 }}>파티원 전용 계정정보 링크 복사됨</span>}
                                                   </div>
                                                   {mm.memo && <div style={{ fontSize:10, color:'#C4B5FD', marginTop:2 }}>{mm.memo}</div>}
                                                 </div>

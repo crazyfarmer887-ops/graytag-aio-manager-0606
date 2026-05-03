@@ -11,6 +11,7 @@ import ProfitPage from "./pages/profit";
 import ChatPage from "./pages/chat";
 import EditPricePage from "./pages/edit-price";
 import PartyInfoPage from "./pages/party-info";
+import PartyAccessPage from "./pages/party-access";
 import BottomNav from "./components/bottom-nav";
 import AdminTokenControl from "./components/admin-token-control";
 import "./styles.css";
@@ -24,6 +25,7 @@ const WriteWrapped   = () => <ErrorBoundary><WritePage /></ErrorBoundary>;
 const ChatWrapped    = () => <ErrorBoundary><ChatPage /></ErrorBoundary>;
 const EditWrapped    = () => <ErrorBoundary><EditPricePage /></ErrorBoundary>;
 const PartyWrapped   = () => <ErrorBoundary><PartyInfoPage /></ErrorBoundary>;
+const AccessWrapped  = () => <ErrorBoundary><PartyAccessPage /></ErrorBoundary>;
 const MyWrapped      = () => <ErrorBoundary><MyAccountPage /></ErrorBoundary>;
 
 function App() {
@@ -42,6 +44,7 @@ function App() {
           <Route path="/chat"          component={ChatWrapped} />
           <Route path="/edit-price"    component={EditWrapped} />
           <Route path="/party-info"    component={PartyWrapped} />
+          <Route path="/access/:token"  component={AccessWrapped} />
           <Route path="/my"            component={MyWrapped} />
         </Switch>
       </div>

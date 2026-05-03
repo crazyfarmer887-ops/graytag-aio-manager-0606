@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { execFile } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 import { cors } from "hono/cors"
@@ -30,6 +31,7 @@ import { buildHermesAutoReplyPrompt, parseHermesAutoReplyJson, type HermesAutoRe
 import { evaluateAutoReplySafety } from './auto-reply-safety';
 import { decideAutonomousReply } from './auto-reply-autonomy';
 import { buildOperationsCenter, createManualResponseQueueItem, mergeManualResponseQueueItem, summarizeManualResponseQueue, type ManualResponseQueueItem } from '../lib/operations-center';
+import { buildPartyAccessPublicPayload, createPartyAccessLinkRecord, normalizePartyAccessToken, partyAccessTokenHash, type PartyAccessLinkRecord, type PartyAccessLinkStore } from '../lib/party-access';
 
 const EMAIL_SERVER = "http://127.0.0.1:3001";
 const MANAGEMENT_HIDDEN_ACCOUNTS_PATH = '/home/ubuntu/.hermes/hermes-agent/graytag-aio-manager-0606/data/management-hidden-accounts.json';
@@ -3307,6 +3309,7 @@ app.post('/chat/mark-read', async (c) => {
 const PARTY_FEEDBACK_PATH = '/home/ubuntu/.hermes/hermes-agent/graytag-aio-manager-0606/data/party-feedback.json';
 const FEEDBACK_SETTINGS_PATH = '/home/ubuntu/.hermes/hermes-agent/graytag-aio-manager-0606/data/feedback-settings.json';
 const PARTY_MAINTENANCE_CHECKLIST_PATH = '/home/ubuntu/.hermes/hermes-agent/graytag-aio-manager-0606/data/party-maintenance-checklists.json';
+const PARTY_ACCESS_LINKS_PATH = '/home/ubuntu/.hermes/hermes-agent/graytag-aio-manager-0606/data/party-access-links.json';
 const PROFILE_ASSIGNMENTS_PATH = '/home/ubuntu/.hermes/hermes-agent/graytag-aio-manager-0606/data/profile-assignments.json';
 
 interface FeedbackItem {
@@ -3363,6 +3366,46 @@ function savePartyMaintenanceChecklistStore(store: PartyMaintenanceChecklistStor
   const dir = PARTY_MAINTENANCE_CHECKLIST_PATH.replace(/\/[^\/]+$/, '');
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   writeFileSync(PARTY_MAINTENANCE_CHECKLIST_PATH, JSON.stringify(store, null, 2), 'utf8');
+}
+
+function loadPartyAccessLinkStore(): PartyAccessLinkStore {
+  try {
+    if (!existsSync(PARTY_ACCESS_LINKS_PATH)) return {};
+    const raw = JSON.parse(readFileSync(PARTY_ACCESS_LINKS_PATH, 'utf8'));
+    return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  } catch { return {}; }
+}
+
+function savePartyAccessLinkStore(store: PartyAccessLinkStore) {
+  const dir = PARTY_ACCESS_LINKS_PATH.replace(/\/[^\/]+$/, '');
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  writeFileSync(PARTY_ACCESS_LINKS_PATH, JSON.stringify(store, null, 2), 'utf8');
+}
+
+function partyAccessShareUrl(c: any, token: string): string {
+  const url = new URL(c.req.url);
+  return `${url.origin}/dashboard/access/${encodeURIComponent(token)}`;
+}
+
+function publicPartyAccessResponse(c: any, payload: ReturnType<typeof buildPartyAccessPublicPayload>) {
+  if (!payload.ok) return c.json(payload, payload.reason === 'not-found' ? 404 : 403);
+  return c.json(payload);
+}
+
+function createPartyAccessToken(): string {
+  return randomBytes(24).toString('base64url');
+}
+
+function updatePartyAccessView(store: PartyAccessLinkStore, record: PartyAccessLinkRecord, viewedAt: string, allowed: boolean): PartyAccessLinkStore {
+  if (!allowed) return store;
+  return {
+    ...store,
+    [record.tokenHash]: {
+      ...record,
+      lastViewedAt: viewedAt,
+      viewCount: Number(record.viewCount || 0) + 1,
+    },
+  };
 }
 
 function loadProfileAssignments(): ProfileAssignment[] {
@@ -3579,6 +3622,71 @@ app.get('/party-feedback', (c) => {
 app.get('/party-maintenance-checklists', (c) => {
   const store = loadPartyMaintenanceChecklistStore();
   return c.json({ ok: true, store, keys: Object.keys(store).length, updatedAt: new Date().toISOString() });
+});
+
+app.post('/party-access-links', async (c) => {
+  const body = await c.req.json().catch(() => ({})) as any;
+  const token = createPartyAccessToken();
+  const serviceType = String(body.serviceType || '').trim();
+  const accountEmail = String(body.accountEmail || '').trim();
+  const member = body.member || {};
+  if (!serviceType || !accountEmail || !member.memberId) {
+    return c.json({ ok: false, error: 'serviceType, accountEmail, member.memberId required' }, 400);
+  }
+  const record = createPartyAccessLinkRecord({
+    token,
+    serviceType,
+    accountEmail,
+    fallbackPassword: String(body.fallbackPassword || ''),
+    fallbackPin: String(body.fallbackPin || ''),
+    member: {
+      kind: member.kind === 'manual' ? 'manual' : 'graytag',
+      memberId: String(member.memberId || ''),
+      memberName: String(member.memberName || '(미확인)'),
+      status: String(member.status || ''),
+      statusName: String(member.statusName || member.status || ''),
+      startDateTime: member.startDateTime || null,
+      endDateTime: member.endDateTime || null,
+    },
+  });
+  const store = loadPartyAccessLinkStore();
+  const next = { ...store, [record.tokenHash]: record };
+  savePartyAccessLinkStore(next);
+  writeAudit({
+    actor: 'admin',
+    action: 'party-access-link.create',
+    targetType: 'party-access-link',
+    targetId: record.id,
+    summary: `created party access link for ${serviceType} ${accountEmail}`,
+    result: 'success',
+    requestId: auditRequestId(c),
+    details: { serviceType, accountEmail, memberId: record.member.memberId, memberKind: record.member.kind },
+  });
+  return c.json({ ok: true, token, url: partyAccessShareUrl(c, token), item: record });
+});
+
+app.get('/party-access/:token', (c) => {
+  const token = normalizePartyAccessToken(c.req.param('token'));
+  if (!token) return c.json({ ok: false, reason: 'not-found' }, 404);
+  const store = loadPartyAccessLinkStore();
+  const record = store[partyAccessTokenHash(token)] || null;
+  const viewedAt = new Date().toISOString();
+  const payload = buildPartyAccessPublicPayload(record, loadPartyMaintenanceChecklistStore(), readGeneratedAccountStore(), viewedAt);
+  if (record) {
+    const next = updatePartyAccessView(store, record, viewedAt, payload.ok === true);
+    if (next !== store) savePartyAccessLinkStore(next);
+    writeAudit({
+      actor: 'system',
+      action: 'party-access-link.view',
+      targetType: 'party-access-link',
+      targetId: record.id,
+      summary: payload.ok ? 'party member viewed account access page' : `party member blocked from account access: ${payload.reason}`,
+      result: payload.ok ? 'success' : 'blocked',
+      requestId: auditRequestId(c),
+      details: payload.audit,
+    });
+  }
+  return publicPartyAccessResponse(c, payload);
 });
 
 app.get('/profile-assignments', (c) => {
