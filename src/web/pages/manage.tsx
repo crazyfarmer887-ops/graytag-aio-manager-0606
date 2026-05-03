@@ -316,11 +316,11 @@ export default function ManagePage() {
     const key = accountCredentialKey(acct);
     const state = maintenanceChecklistStore[key];
     const existingPin = existingPinCache[key];
-    const password = acct.keepPasswd || state?.changedPassword || '';
+    const password = state?.changedPassword || acct.keepPasswd || '';
     const pin = state?.generatedPin || acct.generatedAccount?.pin || existingPin?.pin || '';
     const emailId = state?.generatedPinAliasId || acct.generatedAccount?.emailId || existingPin?.emailId || findEmailAliasId(acct);
     if (!password && !pin) return null;
-    return { password, pin, emailId, source: state?.generatedPin ? 'maintenance' : acct.generatedAccount ? 'generated' : existingPin?.pin ? 'email-dashboard' : 'maintenance' };
+    return { password, pin, emailId, source: state?.changedPassword || state?.generatedPin ? 'maintenance' : acct.generatedAccount ? 'generated' : existingPin?.pin ? 'email-dashboard' : 'graytag' };
   };
 
   const copyText = async (value: string) => {
