@@ -142,7 +142,7 @@ export interface PartyMaintenanceTarget {
   key: string;
   serviceType: string;
   accountEmail: string;
-  reason: 'no-current-users' | 'expiring-soon';
+  reason: 'no-current-users' | 'expiring-soon' | 'member-expiring-first';
   reasonLabel: string;
   usingCount: number;
   activeCount: number;
@@ -469,11 +469,29 @@ export function buildPartyMaintenanceTargets(
         : null;
       const hasOpenedPartyBefore = (acct.members || []).some((member) => !CANCELLED_STATUSES.has(member.status) && member.status !== 'Deleted');
       const isNoCurrentUsers = hasOpenedPartyBefore && acct.usingCount === 0;
-      const isExpiringSoon = daysUntilExpiry !== null && daysUntilExpiry >= 0 && daysUntilExpiry <= withinDays && acct.usingCount > 0;
-      if (!isNoCurrentUsers && !isExpiringSoon) continue;
+      const isAccountExpiringSoon = daysUntilExpiry !== null && daysUntilExpiry >= 0 && daysUntilExpiry <= withinDays && acct.usingCount > 0;
+      const activeNoticeMembers = (acct.members || [])
+        .filter((member) => isActualPartyMember(member) && !CANCELLED_STATUSES.has(member.status) && member.status !== 'Deleted')
+        .map((member) => ({ member, endDate: normalizeDate(member.endDateTime) }))
+        .filter((entry) => entry.endDate)
+        .sort((a, b) => a.endDate.localeCompare(b.endDate));
+      const firstExpiringMember = activeNoticeMembers[0]?.member || null;
+      const firstMemberExpiryDate = activeNoticeMembers[0]?.endDate || '';
+      const firstMemberExpiryMs = firstMemberExpiryDate ? Date.parse(`${firstMemberExpiryDate}T00:00:00Z`) : NaN;
+      const firstMemberDaysUntilExpiry = Number.isFinite(firstMemberExpiryMs) && Number.isFinite(todayMs)
+        ? Math.ceil((firstMemberExpiryMs - todayMs) / 86400000)
+        : null;
+      const memberExpiresBeforeAccount = firstMemberDaysUntilExpiry !== null
+        && firstMemberDaysUntilExpiry >= 0
+        && firstMemberDaysUntilExpiry <= withinDays
+        && acct.usingCount > 0
+        && (!Number.isFinite(expiryMs) || firstMemberExpiryMs < expiryMs);
+      if (!isNoCurrentUsers && !isAccountExpiringSoon && !memberExpiresBeforeAccount) continue;
 
       const sortedMembers = [...(acct.members || [])].sort((a, b) => normalizeDate(b.endDateTime).localeCompare(normalizeDate(a.endDateTime)));
-      const lastMember = sortedMembers.find((member) => !CANCELLED_STATUSES.has(member.status) && member.status !== 'Deleted');
+      const lastMember = memberExpiresBeforeAccount
+        ? firstExpiringMember
+        : sortedMembers.find((member) => !CANCELLED_STATUSES.has(member.status) && member.status !== 'Deleted');
       const noticeMembers = (acct.members || [])
         .filter((member) => isActualPartyMember(member) && !CANCELLED_STATUSES.has(member.status) && member.status !== 'Deleted')
         .map((member) => ({
@@ -483,17 +501,18 @@ export function buildPartyMaintenanceTargets(
           status: member.status,
           statusName: member.statusName || '',
         }));
+      const reason = isNoCurrentUsers ? 'no-current-users' : (memberExpiresBeforeAccount ? 'member-expiring-first' : 'expiring-soon');
       items.push({
         key: `${svc.serviceType}:${acct.email}`,
         serviceType: svc.serviceType,
         accountEmail: acct.email,
-        reason: isNoCurrentUsers ? 'no-current-users' : 'expiring-soon',
-        reasonLabel: isNoCurrentUsers ? '이용중 0명' : '7일 이내 만료',
+        reason,
+        reasonLabel: reason === 'no-current-users' ? '이용중 0명' : (reason === 'member-expiring-first' ? '파티원 먼저 만료' : '7일 이내 만료'),
         usingCount: acct.usingCount,
         activeCount: acct.activeCount,
         totalSlots: acct.totalSlots || getDashboardPartyMax(acct.serviceType),
-        expiryDate,
-        daysUntilExpiry,
+        expiryDate: memberExpiresBeforeAccount ? firstMemberExpiryDate : expiryDate,
+        daysUntilExpiry: memberExpiresBeforeAccount ? firstMemberDaysUntilExpiry : daysUntilExpiry,
         lastMemberName: lastMember?.name || '(미확인)',
         memberCount: acct.members.length,
         noticeMembers,
@@ -503,7 +522,12 @@ export function buildPartyMaintenanceTargets(
 
   return items
     .sort((a, b) => {
-      if (a.reason !== b.reason) return a.reason === 'expiring-soon' ? -1 : 1;
+      const priority: Record<PartyMaintenanceTarget['reason'], number> = {
+        'member-expiring-first': 0,
+        'expiring-soon': 1,
+        'no-current-users': 2,
+      };
+      if (a.reason !== b.reason) return priority[a.reason] - priority[b.reason];
       const aDays = a.daysUntilExpiry ?? 9999;
       const bDays = b.daysUntilExpiry ?? 9999;
       return aDays - bDays || a.serviceType.localeCompare(b.serviceType);

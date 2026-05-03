@@ -32,6 +32,7 @@ test('OTT home and navigation use the refreshed UI structure', () => {
   assert.match(home, /위험 알림/);
   assert.match(home, /바로가기/);
   assert.match(home, /파티 재정비 대상/);
+  assert.match(home, /파티원 먼저 만료/);
   assert.match(home, /완료한 파티 재정비 대상/);
   assert.match(home, /해당 계정으로 또 다시 파티 모집을 진행할건가/);
   assert.match(home, /기존 구독이 유지됐는가/);

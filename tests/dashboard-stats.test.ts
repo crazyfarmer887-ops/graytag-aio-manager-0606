@@ -298,4 +298,44 @@ describe('dashboard stats', () => {
       usingCount: 0,
     });
   });
+
+  test('alerts when the earliest active party member expires before the account subscription', () => {
+    const memberFirstData = {
+      ...data,
+      services: [{
+        serviceType: '넷플릭스',
+        totalUsingMembers: 1,
+        totalActiveMembers: 1,
+        totalIncome: 9000,
+        totalRealized: 0,
+        accounts: [{
+          email: 'member-first@example.com',
+          serviceType: '넷플릭스',
+          usingCount: 1,
+          activeCount: 1,
+          totalSlots: 5,
+          totalIncome: 9000,
+          totalRealizedIncome: 0,
+          expiryDate: '2026-06-30',
+          members: [
+            { dealUsid: 'early-member', name: 'Early', status: 'Using', statusName: '사용중', price: '9,000원', purePrice: 9000, realizedSum: 0, progressRatio: '80%', startDateTime: '2026-04-01', endDateTime: '2026-05-04', remainderDays: 1, source: 'after' },
+            { dealUsid: 'late-member', name: 'Late', status: 'Using', statusName: '사용중', price: '9,000원', purePrice: 9000, realizedSum: 0, progressRatio: '20%', startDateTime: '2026-04-01', endDateTime: '2026-06-15', remainderDays: 42, source: 'after' },
+          ],
+        }],
+      }],
+    } as any;
+
+    const targets = buildPartyMaintenanceTargets(memberFirstData, { today: '2026-05-03', expiringWithinDays: 7 });
+
+    expect(targets).toHaveLength(1);
+    expect(targets[0]).toMatchObject({
+      accountEmail: 'member-first@example.com',
+      reason: 'member-expiring-first',
+      reasonLabel: '파티원 먼저 만료',
+      expiryDate: '2026-05-04',
+      daysUntilExpiry: 1,
+      lastMemberName: 'Early',
+    });
+    expect(targets[0].noticeMembers.map(member => member.dealUsid)).toContain('early-member');
+  });
 });

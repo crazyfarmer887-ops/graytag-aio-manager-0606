@@ -458,7 +458,7 @@ function PartyMaintenancePanel({ items, regeneratingPinKey, sendingNoticeKey, on
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
         <div>
           <div style={{ fontSize: 14, fontWeight: 900, color: 'var(--foreground)' }}>파티 재정비 대상</div>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>재정비 대상 탭은 기존 상세 체크리스트 · 파티 재시작 YES 시 완료 탭으로 이동</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>재정비 대상 탭은 기존 상세 체크리스트 · 파티원 먼저 만료/구독 만료/이용중 0명 알림 처리 · 파티 재시작 YES 시 완료 탭으로 이동</div>
         </div>
         <StatusBadge tone={active.length > 0 ? 'warning' : 'success'}>{active.length}건 남음</StatusBadge>
       </div>
