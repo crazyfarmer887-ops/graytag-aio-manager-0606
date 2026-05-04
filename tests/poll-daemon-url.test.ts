@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { buildPollAfterUsingDealsUrl, buildPollDealsUrl, buildNewChatAlertCandidate, isPollSessionAlertEnabled } from '../src/scheduler/poll-daemon';
+import { buildPollAfterUsingDealsUrl, buildPollDealsUrl, buildNewChatAlertCandidate, buildNewDealStatusAlerts, isPollSessionAlertEnabled } from '../src/scheduler/poll-daemon';
 
 describe('PollDaemon Graytag deal list URL', () => {
   test('uses the finished-included selling list that matches the updated 판매내역 toggle behavior', () => {
@@ -54,5 +54,38 @@ describe('PollDaemon Graytag deal list URL', () => {
       timestamp: '2026-05-01T12:00:00Z',
     });
     expect(buildNewChatAlertCandidate(deal, message, { [alert!.fingerprint]: alert!.timestamp })).toBeNull();
+  });
+
+  test('alerts when a deal is first seen already delivered after a missed OnSale transition', () => {
+    const { alerts, updated } = buildNewDealStatusAlerts([
+      {
+        productUsid: 'deal-new-delivered',
+        dealStatus: 'Delivered',
+        productTypeString: '티빙',
+        productName: '티빙 프리미엄',
+        borrowerName: '최현준',
+      },
+    ], {});
+
+    expect(updated['deal-new-delivered']).toBe('Delivered');
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toContain('새 구매 발생');
+    expect(alerts[0]).toContain('티빙');
+    expect(alerts[0]).toContain('최현준');
+    expect(alerts[0]).toContain('deal-new-delivered');
+  });
+
+  test('does not alert for first-seen OnSale rows during baseline refresh', () => {
+    const { alerts, updated } = buildNewDealStatusAlerts([
+      {
+        productUsid: 'deal-on-sale',
+        dealStatus: 'OnSale',
+        productTypeString: '웨이브',
+        productName: '웨이브 프리미엄',
+      },
+    ], {});
+
+    expect(updated['deal-on-sale']).toBe('OnSale');
+    expect(alerts).toEqual([]);
   });
 });

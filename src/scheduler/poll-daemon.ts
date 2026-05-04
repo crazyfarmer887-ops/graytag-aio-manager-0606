@@ -94,8 +94,57 @@ export interface PollChatDeal {
   productTypeString?: string;
   productName?: string;
   keepAcct?: string;
+  productKeepAcctYn?: boolean;
+  dealStatus?: string;
   lenderChatUnread?: boolean;
   dealDetail?: { lenderChatUnread?: boolean; chatRoomUuid?: string };
+}
+
+function buildPurchaseAlertMessage(deal: PollChatDeal, status: string): string {
+  const usid = String(deal.productUsid || deal.dealUsid || '');
+  const ott = deal.productTypeString ?? '';
+  const borrower = deal.borrowerName ?? '(미확인)';
+  const name = (deal.productName ?? '').slice(0, 30);
+  return `🛒 <b>새 구매 발생!</b>\n${ott} — ${name}\n구매자: ${borrower}\nUSID: <code>${usid}</code>\n상태: ${status}`;
+}
+
+function isFirstSeenPurchaseStatus(status: string): boolean {
+  return ['Delivered', 'ExtensionWaiting', 'OccupationWaiting'].includes(status);
+}
+
+export function buildNewDealStatusAlerts(deals: PollChatDeal[], known: Record<string, string>): { updated: Record<string, string>; alerts: string[] } {
+  const updated: Record<string, string> = { ...known };
+  const alerts: string[] = [];
+
+  for (const deal of deals) {
+    const usid = String(deal.productUsid || '');
+    if (!usid) continue;
+    const status = String(deal.dealStatus || '');
+    const prev = known[usid];
+
+    if (prev === undefined) {
+      updated[usid] = status;
+      if (isFirstSeenPurchaseStatus(status) && String(deal.borrowerName || '').trim()) {
+        alerts.push(buildPurchaseAlertMessage(deal, status));
+      }
+    } else if (prev !== status) {
+      updated[usid] = status;
+      if (prev === 'OnSale' && status !== 'OnSale') {
+        alerts.push(buildPurchaseAlertMessage(deal, status));
+      }
+    }
+
+    if (status === 'ExtensionWaiting' && deal.productKeepAcctYn === false) {
+      const warnKey = 'ext_warned_' + usid;
+      if (!known[warnKey]) {
+        updated[warnKey] = 'warned';
+        const ott = deal.productTypeString ?? '';
+        alerts.push(`⚠️ <b>연장 대기 — keepAcct 없음!</b>\n${ott} USID: <code>${usid}</code>\n계정 정보를 설정해주세요.`);
+      }
+    }
+  }
+
+  return { updated, alerts };
 }
 
 export interface PollChatAlertCandidate {
@@ -298,35 +347,7 @@ async function pollGraytag() {
       console.log('[PollDaemon] 사용중 채팅 API 실패:', afterResp.status);
     }
     const known = loadKnownDeals();
-    const updated: Record<string, string> = { ...known };
-    const alerts: string[] = [];
-
-    for (const deal of deals) {
-      const usid: string = deal.productUsid;
-      const status: string = deal.dealStatus;
-      const prev = known[usid];
-
-      if (prev === undefined) { updated[usid] = status; continue; }
-
-      if (prev !== status) {
-        updated[usid] = status;
-        if (prev === 'OnSale' && status !== 'OnSale') {
-          const ott = deal.productTypeString ?? '';
-          const borrower = deal.borrowerName ?? '(미확인)';
-          const name = (deal.productName ?? '').slice(0, 30);
-          alerts.push(`\uD83D\uDED2 <b>\uC0C8 \uAD6C\uB9E4 \uBC1C\uC0DD!</b>\n${ott} \u2014 ${name}\n\uAD6C\uB9E4\uC790: ${borrower}\nUSID: <code>${usid}</code>\n\uC0C1\uD0DC: ${status}`);
-        }
-      }
-
-      if (status === 'ExtensionWaiting' && deal.productKeepAcctYn === false) {
-        const warnKey = 'ext_warned_' + usid;
-        if (!known[warnKey]) {
-          updated[warnKey] = 'warned';
-          const ott = deal.productTypeString ?? '';
-          alerts.push(`\u26A0\uFE0F <b>\uC5F0\uC7A5 \uB300\uAE30 \u2014 keepAcct \uC5C6\uC74C!</b>\n${ott} USID: <code>${usid}</code>\n\uACC4\uC815 \uC815\uBCF4\uB97C \uC124\uC815\uD574\uC8FC\uC138\uC694.`);
-        }
-      }
-    }
+    const { updated, alerts } = buildNewDealStatusAlerts(deals, known);
 
     for (const msg of alerts) {
       await sendSellerAlert({
