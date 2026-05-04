@@ -111,7 +111,8 @@ describe('auto reply core', () => {
     expect(isKoreanBusinessHours(kst2130)).toBe(false);
     expect(shouldSendDailyAccountAccessNotice(store, 'room-daily', kst1500)).toBe(true);
     expect(buildDailyAccountAccessNoticeReply('https://email-verify.xyz/dashboard/access/token')).toContain('업데이트된 정보로 로그인을 시도');
-    expect(buildDailyAccountAccessNoticeReply('https://email-verify.xyz/dashboard/access/token')).toContain('https://email-verify.xyz/dashboard/access/token');
+    expect(buildDailyAccountAccessNoticeReply('https://email-verify.xyz/dashboard/access/token')).toContain('✅ 계정 접근 주소 : https://email-verify.xyz/dashboard/access/token ✅');
+    expect(buildDailyAccountAccessNoticeReply('https://email-verify.xyz/dashboard/access/token')).toContain('✅ 아래 내용 꼭 읽어주세요! 로그인 관련 내용입니다!! ✅');
     expect(buildOffHoursNoticeReply()).toBe('문의 시간은 14:00 ~ 21:00 라서, 최대한 빨리 답변드리도록 하겠습니다.');
 
     const first = createAutoReplyJob(store, { fingerprint: 'daily-fp', chatRoomUuid: 'room-daily', buyerMessage: '로그인 문의', createdAt: '2026-05-04T06:00:00Z' });

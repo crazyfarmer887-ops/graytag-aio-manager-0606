@@ -3,7 +3,7 @@ import { CATEGORIES } from "../lib/constants";
 import { buildAccountSlotStates, dedupeRecruitingProducts, mergeRecruitingProducts, type SlotState } from "../lib/account-slots";
 import { removeRecruitingProductFromManageData } from "../lib/manage-optimistic";
 import { assertAutoDeliveryInput, buildAutoFillDeliveryMemo, buildFillPartyAccessMember, buildFillProductModel, findExactPasswordForAccount, requireExactAliasMemoForAutoFill } from "../../lib/graytag-fill";
-import { generateProfileNickname, generateUniqueProfileNicknames, isValidProfileNickname, normalizeProfileNickname } from "../../lib/profile-nickname";
+import { generateProfileNickname, generateUniqueProfileNicknames, isValidProfileNickname, normalizeProfileNickname, stableRandomFromSeed } from "../../lib/profile-nickname";
 import type { PartyMaintenanceChecklistStore } from "../../lib/party-maintenance-checklist";
 import { getGeneratedAccountCreationCopy } from "../../lib/generated-accounts";
 import { buildPartyAccessDeliveryTemplate, PARTY_ACCESS_URL_PLACEHOLDER } from "../../lib/party-access-template";
@@ -131,14 +131,6 @@ interface ManualMember {
 }
 
 const SOURCE_PRESETS = ['당근마켓', '에브리타임', '지인소개', '번개장터', '카카오톡', '네이버카페', '인스타그램', '기타'];
-
-const stableRandomFromSeed = (seed: string) => {
-  let state = Array.from(seed || 'graytag').reduce((acc, ch) => ((acc * 31) + ch.charCodeAt(0)) >>> 0, 2166136261);
-  return () => {
-    state = (state * 1664525 + 1013904223) >>> 0;
-    return state / 0x100000000;
-  };
-};
 
 type FilterMode = 'using'|'active'|'all';
 

@@ -62,6 +62,14 @@ export interface ProfileAssignment {
   updatedAt: string;
 }
 
+export function stableRandomFromSeed(seed: string): () => number {
+  let state = Array.from(seed || 'graytag').reduce((acc, ch) => ((acc * 31) + ch.charCodeAt(0)) >>> 0, 2166136261);
+  return () => {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    return state / 0x100000000;
+  };
+}
+
 export function generateProfileNickname(random = Math.random): string {
   const index = Math.min(PROFILE_NICKNAME_DICTIONARY.length - 1, Math.floor(random() * PROFILE_NICKNAME_DICTIONARY.length));
   return PROFILE_NICKNAME_DICTIONARY[index]?.name || PROFILE_NICKNAME_DICTIONARY[0].name;
@@ -93,6 +101,25 @@ export function normalizeProfileNickname(value: string): string {
 export function isValidProfileNickname(value: string): boolean {
   const length = Array.from(normalizeProfileNickname(value)).length;
   return length >= 3 && length <= 4;
+}
+
+export function profileNicknameForPartyMember(input: {
+  serviceType: string;
+  accountEmail: string;
+  partyRefs: string[];
+  kind: 'graytag' | 'manual';
+  memberId: string;
+}): string {
+  const refs = input.partyRefs.map((ref) => String(ref || '').trim()).filter(Boolean);
+  const memberRef = `${input.kind}:${input.memberId}`;
+  const completeRefs = refs.includes(memberRef) ? refs : [...refs, memberRef];
+  const nicknames = generateUniqueProfileNicknames(
+    completeRefs.length,
+    '',
+    stableRandomFromSeed(`${input.serviceType}:${input.accountEmail}:party-profiles`),
+  );
+  const index = completeRefs.indexOf(memberRef);
+  return nicknames[index] || generateProfileNickname(stableRandomFromSeed(`${input.serviceType}:${input.accountEmail}:${memberRef}`));
 }
 
 export function buildProfileWarningMemo(profileNickname: string, baseMemo: string): string {

@@ -127,6 +127,7 @@ describe('auto reply API', () => {
       ...candidate(unique, '로그인이 안돼요'),
       keepAcct: 'buyer-account@example.com',
       keepPasswd: 'pw-should-not-print',
+      profileName: '고슴도치',
       dealStatus: 'Using',
       statusName: '이용 중',
       startDateTime: '2026-05-01T00:00:00Z',
@@ -144,6 +145,13 @@ describe('auto reply API', () => {
     expect(data.jobs[0].category).toContain('daily_account_access_notice');
     expect(data.jobs[0].draftReply).toContain('로그인 관련 문의는 꼭');
     expect(data.jobs[0].draftReply).toContain('/dashboard/access/');
+    expect(data.jobs[0].draftReply).toContain('✅ 계정 접근 주소');
+    const accessUrl = String(data.jobs[0].draftReply).match(/https?:\/\/[^\s]+\/dashboard\/access\/[^\s✅]+/)?.[0] || '';
+    expect(accessUrl).toBeTruthy();
+    const accessToken = decodeURIComponent(accessUrl.split('/dashboard/access/')[1] || '');
+    const publicRes = await apiApp.request(`/party-access/${encodeURIComponent(accessToken)}`);
+    const publicData = await publicRes.json() as any;
+    expect(publicData.profileName).toBe('고슴도치');
 
     const ack = await authed('/chat/auto-reply/tick', {
       method: 'POST',

@@ -5,6 +5,8 @@ import {
   generateProfileNickname,
   generateUniqueProfileNicknames,
   isValidProfileNickname,
+  profileNicknameForPartyMember,
+  stableRandomFromSeed,
   PROFILE_NICKNAME_DICTIONARY,
 } from '../src/lib/profile-nickname';
 
@@ -33,6 +35,37 @@ describe('profile nickname assignment', () => {
     expect(names[0]).toBe('수달이');
     expect(new Set(names).size).toBe(4);
     for (const name of names) expect(isValidProfileNickname(name)).toBe(true);
+  });
+
+  test('generates the same stable profile nickname for a party member as account management', () => {
+    const partyRefs = ['graytag:deal-a', 'graytag:deal-b', 'manual:manual-1'];
+    const fromAutoReply = profileNicknameForPartyMember({
+      serviceType: '디즈니플러스',
+      accountEmail: 'disney@example.com',
+      partyRefs,
+      kind: 'graytag',
+      memberId: 'deal-b',
+    });
+    const sameAgain = profileNicknameForPartyMember({
+      serviceType: '디즈니플러스',
+      accountEmail: 'disney@example.com',
+      partyRefs,
+      kind: 'graytag',
+      memberId: 'deal-b',
+    });
+    const fallback = profileNicknameForPartyMember({
+      serviceType: '디즈니플러스',
+      accountEmail: 'disney@example.com',
+      partyRefs,
+      kind: 'graytag',
+      memberId: 'missing-deal',
+    });
+
+    expect(fromAutoReply).toBe(sameAgain);
+    expect(fromAutoReply).toBe(generateUniqueProfileNicknames(3, '', stableRandomFromSeed('디즈니플러스:disney@example.com:party-profiles'))[1]);
+    expect(isValidProfileNickname(fromAutoReply)).toBe(true);
+    expect(isValidProfileNickname(fallback)).toBe(true);
+    expect(fallback).not.toBe('missing-deal');
   });
 
   test('validates manual nicknames as Korean 3-4 character names', () => {

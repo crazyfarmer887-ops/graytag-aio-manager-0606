@@ -19,7 +19,7 @@ import { createProfileAuditProgress, finishProfileAuditProgress, loadProfileAudi
 import { checkNetflixProfiles, fetchNetflixEmailCodeViaEmailServer } from './netflix-profile-checker';
 import { extractGraytagChats, findLatestBuyerInquiryMessage } from './chat-message-summary';
 import { mergePartyMaintenanceChecklistState, type PartyMaintenanceChecklistStore } from '../lib/party-maintenance-checklist';
-import { buildProfileAssignment, type ProfileAssignment } from '../lib/profile-nickname';
+import { buildProfileAssignment, profileNicknameForPartyMember, type ProfileAssignment } from '../lib/profile-nickname';
 import { buildGeneratedAccount, deleteGeneratedAccountFromStore, extractSimpleLoginAliasRef, generateAccountPassword, mergeGeneratedAccountsIntoManagement, nextGeneratedAliasPrefix, normalizeGeneratedAccountPatch, normalizeManualAliasPrefix, type GeneratedAccountStore, type SimpleLoginAliasRef } from '../lib/generated-accounts';
 import { mergeOnSaleAccountsIntoManagement } from '../lib/on-sale-accounts';
 import { buildAccountCheckInflowStore, isAccountCheckStatus, type AccountCheckInflowStore } from '../lib/account-check-inflow';
@@ -2052,6 +2052,40 @@ app.post('/api/operations-center/manual-response-queue', createManualResponseQue
 app.patch('/operations-center/manual-response-queue/:id', updateManualResponseQueueHandler);
 app.patch('/api/operations-center/manual-response-queue/:id', updateManualResponseQueueHandler);
 
+const AUTO_REPLY_PROFILE_USING_STATUSES = new Set(['Using', 'UsingNearExpiration', 'DeliveredAndCheckPrepaid']);
+function isAutoReplyProfileMember(deal: any): boolean {
+  const status = String(deal?.dealStatus || '');
+  const statusName = String(deal?.lenderDealStatusName || deal?.statusName || '');
+  return AUTO_REPLY_PROFILE_USING_STATUSES.has(status) || statusName.includes('계정확인중') || statusName.includes('계정 확인중');
+}
+function autoReplyAccountKey(serviceType: string, accountEmail: string): string {
+  return `${String(serviceType || '').trim()}:${String(accountEmail || '').trim()}`;
+}
+function buildAutoReplyProfileRefsByAccount(deals: any[], manualMembers: ManualMember[]): Map<string, string[]> {
+  const refs = new Map<string, string[]>();
+  const push = (key: string, ref: string) => {
+    if (!key.includes(':') || !ref || ref.endsWith(':')) return;
+    const current = refs.get(key) || [];
+    if (!current.includes(ref)) current.push(ref);
+    refs.set(key, current);
+  };
+  for (const deal of deals) {
+    const serviceType = String(deal.productTypeString || '').trim();
+    const accountEmail = String(deal.keepAcct || '').trim();
+    const dealUsid = String(deal.dealUsid || '').trim();
+    if (!serviceType || !accountEmail || !dealUsid || !isAutoReplyProfileMember(deal)) continue;
+    push(autoReplyAccountKey(serviceType, accountEmail), `graytag:${dealUsid}`);
+  }
+  for (const member of manualMembers) {
+    if (member.status !== 'active') continue;
+    const serviceType = String(member.serviceType || '').trim();
+    const accountEmail = String(member.accountEmail || '').trim();
+    if (!serviceType || !accountEmail || !member.id) continue;
+    push(autoReplyAccountKey(serviceType, accountEmail), `manual:${member.id}`);
+  }
+  return refs;
+}
+
 async function scanAutoReplyCandidates(maxRooms = 10): Promise<any[]> {
   const cookies = loadSessionCookies();
   if (!cookies) return [];
@@ -2069,6 +2103,8 @@ async function scanAutoReplyCandidates(maxRooms = 10): Promise<any[]> {
     ...extractLenderDeals(afterR.data),
     ...extractLenderDeals(beforeR.data),
   ];
+  const manualMembers = loadManualMembers();
+  const profileRefsByAccount = buildAutoReplyProfileRefsByAccount(allDeals, manualMembers);
   const seen = new Set<string>();
   const candidates: any[] = [];
   for (const deal of allDeals) {
@@ -2086,6 +2122,13 @@ async function scanAutoReplyCandidates(maxRooms = 10): Promise<any[]> {
       const msgData = await safeJson(msgResp);
       const message = findLatestBuyerInquiryMessage(extractGraytagChats(msgData));
       if (!message) continue;
+      const serviceType = String(deal.productTypeString || '').trim();
+      const accountEmail = String(deal.keepAcct || '').trim();
+      const dealUsid = String(deal.dealUsid || '').trim();
+      const partyRefs = profileRefsByAccount.get(autoReplyAccountKey(serviceType, accountEmail)) || [];
+      const assignedProfileName = serviceType && accountEmail && dealUsid
+        ? profileNicknameForPartyMember({ serviceType, accountEmail, partyRefs, kind: 'graytag', memberId: dealUsid })
+        : '';
       const candidate = {
         message: message.message || '',
         registeredDateTime: message.registeredDateTime,
@@ -2097,12 +2140,13 @@ async function scanAutoReplyCandidates(maxRooms = 10): Promise<any[]> {
         isInfo: message.isInfo,
         messageType: message.messageType,
         chatRoomUuid: deal.chatRoomUuid,
-        dealUsid: deal.dealUsid,
+        dealUsid,
         buyerName: deal.borrowerName?.trim(),
-        productType: deal.productTypeString,
+        productType: serviceType,
         productName: deal.productName,
-        keepAcct: deal.keepAcct,
+        keepAcct: accountEmail,
         keepPasswd: deal.keepPasswd,
+        profileName: assignedProfileName,
         dealStatus: deal.dealStatus,
         statusName: deal.lenderDealStatusName || deal.dealStatus,
         startDateTime: deal.startDateTime,

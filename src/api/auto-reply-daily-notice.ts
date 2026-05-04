@@ -1,3 +1,4 @@
+import { buildPartyAccessDeliveryTemplate } from '../lib/party-access-template';
 import type { AutoReplyJobStore } from './auto-reply-jobs';
 
 export const DAILY_ACCOUNT_ACCESS_NOTICE_CATEGORY = 'daily_account_access_notice';
@@ -44,9 +45,8 @@ export function shouldSendOffHoursNotice(store: AutoReplyJobStore, chatRoomUuid:
 export function buildDailyAccountAccessNoticeReply(accessUrl: string): string {
   const url = String(accessUrl || '').trim();
   return [
-    '로그인 관련 문의는 꼭',
-    url || '{각자 할당된 계정 확인 링크}',
-    '를 먼저 참고해주세요.',
+    '로그인 관련 문의는 꼭 아래 계정 접근 주소를 먼저 참고해주세요.',
+    buildPartyAccessDeliveryTemplate(url || '{각자 할당된 계정 확인 링크}'),
     '다른 파티원분들의 탈퇴 등으로 인해 계정 정보가 바뀔 수 있어, 해당 링크에서 업데이트된 정보로 로그인을 시도하셔야 합니다!',
     '로그인 외의 문제는, 다시 한 번 더 문의 남겨주세요.',
   ].join('\n');
