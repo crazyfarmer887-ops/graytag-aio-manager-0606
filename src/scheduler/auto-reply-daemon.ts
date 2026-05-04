@@ -5,9 +5,9 @@ export function autoReplyDaemonEnabled(env: EnvLike = process.env): boolean {
 }
 
 export function autoReplyDaemonIntervalMs(env: EnvLike = process.env): number {
-  const raw = Number(env.AUTO_REPLY_DAEMON_INTERVAL_MS || 30000);
-  if (!Number.isFinite(raw)) return 30000;
-  return Math.max(10000, Math.min(5 * 60 * 1000, Math.floor(raw)));
+  const raw = Number(env.AUTO_REPLY_DAEMON_INTERVAL_MS || 10 * 60 * 1000);
+  if (!Number.isFinite(raw)) return 10 * 60 * 1000;
+  return Math.max(10000, Math.min(10 * 60 * 1000, Math.floor(raw)));
 }
 
 export function startAutoReplyDaemon(port: number): void {

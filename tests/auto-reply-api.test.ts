@@ -36,6 +36,7 @@ describe('auto reply API', () => {
     process.env.AIO_ADMIN_TOKEN = token;
     process.env.AUTO_REPLY_JOBS_PATH = join(tempDir, 'jobs.json');
     process.env.AUTO_REPLY_CONFIG_PATH = join(tempDir, 'config.json');
+    process.env.PARTY_ACCESS_LINKS_PATH = join(tempDir, 'party-access-links.json');
     process.env.AUTO_REPLY_ENABLED = 'true';
     process.env.AUTO_REPLY_DRAFT_ONLY = 'true';
     process.env.AUTO_REPLY_USE_HERMES = 'false';
@@ -49,10 +50,12 @@ describe('auto reply API', () => {
     rmSync(tempDir, { recursive: true, force: true });
     delete process.env.AUTO_REPLY_JOBS_PATH;
     delete process.env.AUTO_REPLY_CONFIG_PATH;
+    delete process.env.PARTY_ACCESS_LINKS_PATH;
     delete process.env.AUTO_REPLY_ENABLED;
     delete process.env.AUTO_REPLY_DRAFT_ONLY;
     delete process.env.AUTO_REPLY_USE_HERMES;
     delete process.env.AUTO_REPLY_ENABLE_SEND;
+    delete process.env.AUTO_REPLY_TEST_NOW;
     delete process.env.SELLER_ALERT_TELEGRAM_BOT_TOKEN;
     delete process.env.SELLER_ALERT_TELEGRAM_CHAT_ID;
     delete process.env.SELLER_ALERT_TELEGRAM_DRY_RUN;
@@ -114,6 +117,56 @@ describe('auto reply API', () => {
     const log = await authed('/chat/auto-reply-log?limit=1');
     const data = await log.json() as any;
     expect(data.jobs[0].blockReason).toBe('자동응답이 꺼져 있음');
+  });
+
+  test('daily first buyer message drafts account access notice and later acknowledgement is ignored', async () => {
+    process.env.AUTO_REPLY_ENABLE_SEND = 'true';
+    process.env.AUTO_REPLY_TEST_NOW = '2026-05-04T06:00:00Z'; // 15:00 KST
+    const unique = `api-daily-room-${Date.now()}`;
+    const firstCandidate = {
+      ...candidate(unique, '로그인이 안돼요'),
+      keepAcct: 'buyer-account@example.com',
+      keepPasswd: 'pw-should-not-print',
+      dealStatus: 'Using',
+      statusName: '이용 중',
+      startDateTime: '2026-05-01T00:00:00Z',
+      endDateTime: '2026-05-31T00:00:00Z',
+    };
+    const first = await authed('/chat/auto-reply/tick', {
+      method: 'POST',
+      body: JSON.stringify({ dryRun: true, candidates: [firstCandidate] }),
+    });
+    const firstJson = await first.json() as any;
+    expect(firstJson.drafted).toBe(1);
+
+    const log = await authed('/chat/auto-reply-log?limit=1');
+    const data = await log.json() as any;
+    expect(data.jobs[0].category).toContain('daily_account_access_notice');
+    expect(data.jobs[0].draftReply).toContain('로그인 관련 문의는 꼭');
+    expect(data.jobs[0].draftReply).toContain('/dashboard/access/');
+
+    const ack = await authed('/chat/auto-reply/tick', {
+      method: 'POST',
+      body: JSON.stringify({ dryRun: true, candidates: [{ ...firstCandidate, message: '네 감사합니다', registeredDateTime: '2026-05-04T06:01:00Z' }] }),
+    });
+    const ackJson = await ack.json() as any;
+    expect(ackJson.ignored).toBe(1);
+  });
+
+  test('off-hours notice is added outside 14-21 KST even when daily account guide is also sent', async () => {
+    process.env.AUTO_REPLY_ENABLE_SEND = 'true';
+    process.env.AUTO_REPLY_TEST_NOW = '2026-05-04T13:00:00Z'; // 22:00 KST
+    const unique = `api-offhours-room-${Date.now()}`;
+    const res = await authed('/chat/auto-reply/tick', {
+      method: 'POST',
+      body: JSON.stringify({ dryRun: true, candidates: [{ ...candidate(unique), keepAcct: 'buyer-account@example.com', keepPasswd: 'pw', dealStatus: 'Using' }] }),
+    });
+    expect((await res.json() as any).drafted).toBe(1);
+    const log = await authed('/chat/auto-reply-log?limit=1');
+    const data = await log.json() as any;
+    expect(data.jobs[0].category).toContain('daily_account_access_notice');
+    expect(data.jobs[0].category).toContain('off_hours_notice');
+    expect(data.jobs[0].draftReply).toContain('문의 시간은 14:00 ~ 21:00');
   });
 
   test('manual AI reply endpoint uses Hermes path or safe fallback, not OpenAI/PicoClaw', async () => {

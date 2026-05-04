@@ -1,4 +1,4 @@
-export type AutoReplyUiStatus = 'queued' | 'drafted' | 'sent' | 'blocked' | 'error';
+export type AutoReplyUiStatus = 'queued' | 'drafted' | 'sent' | 'blocked' | 'error' | 'ignored';
 
 export interface AutoReplyLogJob {
   id: string;
@@ -22,10 +22,11 @@ export interface AutoReplySummary {
   sent: number;
   blocked: number;
   error: number;
+  ignored: number;
 }
 
 export function summarizeAutoReplyJobs(jobs: AutoReplyLogJob[] = []): AutoReplySummary {
-  const summary: AutoReplySummary = { total: jobs.length, queued: 0, drafted: 0, sent: 0, blocked: 0, error: 0 };
+  const summary: AutoReplySummary = { total: jobs.length, queued: 0, drafted: 0, sent: 0, blocked: 0, error: 0, ignored: 0 };
   for (const job of jobs) {
     if (job.status in summary) summary[job.status as keyof Omit<AutoReplySummary, 'total'>] += 1;
   }
@@ -38,6 +39,7 @@ export function autoReplyStatusLabel(status: AutoReplyUiStatus): string {
     case 'drafted': return '초안 대기';
     case 'sent': return '발송 완료';
     case 'blocked': return '사람 확인';
+    case 'ignored': return '응답 생략';
     case 'error': return '오류';
   }
 }
@@ -46,6 +48,7 @@ export function autoReplyStatusTone(status: AutoReplyUiStatus): { background: st
   switch (status) {
     case 'sent': return { background: '#ECFDF5', color: '#047857' };
     case 'blocked': return { background: '#FFF7ED', color: '#C2410C' };
+    case 'ignored': return { background: '#F3F4F6', color: '#6B7280' };
     case 'error': return { background: '#FEF2F2', color: '#B91C1C' };
     case 'queued': return { background: '#EFF6FF', color: '#1D4ED8' };
     case 'drafted': return { background: '#F5F3FF', color: '#7C3AED' };

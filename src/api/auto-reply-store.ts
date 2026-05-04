@@ -1,4 +1,4 @@
-export type AutoReplyProcessedStatus = 'queued' | 'drafted' | 'sent' | 'blocked' | 'error';
+export type AutoReplyProcessedStatus = 'queued' | 'drafted' | 'sent' | 'blocked' | 'error' | 'ignored';
 
 export interface AutoReplyState {
   processedFingerprints: Record<string, {

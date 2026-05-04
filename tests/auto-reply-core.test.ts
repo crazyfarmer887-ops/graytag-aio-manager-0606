@@ -9,6 +9,7 @@ import { createAutoReplyJob, createEmptyAutoReplyJobStore, listAutoReplyJobs, lo
 import { routeAutoReply } from '../src/api/auto-reply-router';
 import { buildHermesAutoReplyPrompt, parseHermesAutoReplyJson } from '../src/api/hermes-auto-reply';
 import { evaluateAutoReplySafety } from '../src/api/auto-reply-safety';
+import { DAILY_ACCOUNT_ACCESS_NOTICE_CATEGORY, OFF_HOURS_NOTICE_CATEGORY, buildDailyAccountAccessNoticeReply, buildOffHoursNoticeReply, isKoreanBusinessHours, isSimpleAcknowledgement, kstDayKey, shouldSendDailyAccountAccessNotice, shouldSendOffHoursNotice } from '../src/api/auto-reply-daily-notice';
 
 describe('auto reply core', () => {
   test('uses conservative defaults and detects risk keywords', () => {
@@ -99,6 +100,34 @@ describe('auto reply core', () => {
 
     expect(parseHermesAutoReplyJson(' { "category":"login_issue", "risk":"low", "autoSendAllowed":false, "reply":"안내", "reason":"초안", "needsHuman":false } ').reply).toBe('안내');
     expect(() => parseHermesAutoReplyJson('not json')).toThrow(/Invalid Hermes auto-reply JSON/);
+  });
+
+  test('builds daily account-link and off-hours notices with KST day reset', () => {
+    const store = createEmptyAutoReplyJobStore();
+    const kst1500 = new Date('2026-05-04T06:00:00Z');
+    const kst2130 = new Date('2026-05-04T12:30:00Z');
+    expect(kstDayKey(kst1500)).toBe('2026-05-04');
+    expect(isKoreanBusinessHours(kst1500)).toBe(true);
+    expect(isKoreanBusinessHours(kst2130)).toBe(false);
+    expect(shouldSendDailyAccountAccessNotice(store, 'room-daily', kst1500)).toBe(true);
+    expect(buildDailyAccountAccessNoticeReply('https://email-verify.xyz/dashboard/access/token')).toContain('업데이트된 정보로 로그인을 시도');
+    expect(buildDailyAccountAccessNoticeReply('https://email-verify.xyz/dashboard/access/token')).toContain('https://email-verify.xyz/dashboard/access/token');
+    expect(buildOffHoursNoticeReply()).toBe('문의 시간은 14:00 ~ 21:00 라서, 최대한 빨리 답변드리도록 하겠습니다.');
+
+    const first = createAutoReplyJob(store, { fingerprint: 'daily-fp', chatRoomUuid: 'room-daily', buyerMessage: '로그인 문의', createdAt: '2026-05-04T06:00:00Z' });
+    updateAutoReplyJob(store, first.id, { status: 'sent', category: DAILY_ACCOUNT_ACCESS_NOTICE_CATEGORY, draftReply: 'notice' }, '2026-05-04T06:00:01Z');
+    expect(shouldSendDailyAccountAccessNotice(store, 'room-daily', kst1500)).toBe(false);
+    expect(shouldSendDailyAccountAccessNotice(store, 'room-daily', new Date('2026-05-05T05:00:00Z'))).toBe(true);
+
+    const off = createAutoReplyJob(store, { fingerprint: 'off-fp', chatRoomUuid: 'room-daily', buyerMessage: '문의', createdAt: '2026-05-04T12:31:00Z' });
+    updateAutoReplyJob(store, off.id, { status: 'sent', category: OFF_HOURS_NOTICE_CATEGORY, draftReply: 'off' }, '2026-05-04T12:31:01Z');
+    expect(shouldSendOffHoursNotice(store, 'room-daily', kst2130)).toBe(false);
+  });
+
+  test('recognizes short acknowledgement replies after the daily notice', () => {
+    expect(isSimpleAcknowledgement('네 감사합니다')).toBe(true);
+    expect(isSimpleAcknowledgement('확인했습니다')).toBe(true);
+    expect(isSimpleAcknowledgement('아직 로그인이 안돼요')).toBe(false);
   });
 
   test('safety gate blocks risky or draft-only sends', () => {

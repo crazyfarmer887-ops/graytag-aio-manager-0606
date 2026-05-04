@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
-export type AutoReplyJobStatus = 'queued' | 'drafted' | 'sent' | 'blocked' | 'error';
+export type AutoReplyJobStatus = 'queued' | 'drafted' | 'sent' | 'blocked' | 'error' | 'ignored';
 export type AutoReplyRisk = 'low' | 'medium' | 'high';
 
 export interface AutoReplyJob {
@@ -12,6 +12,14 @@ export interface AutoReplyJob {
   productType?: string;
   productName?: string;
   keepAcct?: string;
+  keepPasswd?: string;
+  fallbackPin?: string;
+  emailAccessUrl?: string;
+  profileName?: string;
+  dealStatus?: string;
+  statusName?: string;
+  startDateTime?: string | null;
+  endDateTime?: string | null;
   buyerMessage: string;
   messageTime?: string;
   status: AutoReplyJobStatus;
@@ -38,6 +46,14 @@ export interface CreateAutoReplyJobInput {
   productType?: string;
   productName?: string;
   keepAcct?: string;
+  keepPasswd?: string;
+  fallbackPin?: string;
+  emailAccessUrl?: string;
+  profileName?: string;
+  dealStatus?: string;
+  statusName?: string;
+  startDateTime?: string | null;
+  endDateTime?: string | null;
   buyerMessage: string;
   messageTime?: string;
   createdAt?: string;
@@ -69,6 +85,14 @@ export function createAutoReplyJob(store: AutoReplyJobStore, input: CreateAutoRe
     productType: input.productType,
     productName: input.productName,
     keepAcct: input.keepAcct,
+    keepPasswd: input.keepPasswd,
+    fallbackPin: input.fallbackPin,
+    emailAccessUrl: input.emailAccessUrl,
+    profileName: input.profileName,
+    dealStatus: input.dealStatus,
+    statusName: input.statusName,
+    startDateTime: input.startDateTime ?? null,
+    endDateTime: input.endDateTime ?? null,
     buyerMessage: input.buyerMessage,
     messageTime: input.messageTime,
     status: 'queued',

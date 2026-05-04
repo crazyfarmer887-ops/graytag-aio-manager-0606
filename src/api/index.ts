@@ -32,6 +32,7 @@ import { evaluateAutoReplySafety } from './auto-reply-safety';
 import { decideAutonomousReply } from './auto-reply-autonomy';
 import { buildOperationsCenter, createManualResponseQueueItem, mergeManualResponseQueueItem, summarizeManualResponseQueue, type ManualResponseQueueItem } from '../lib/operations-center';
 import { buildPartyAccessPublicPayload, createPartyAccessLinkRecord, normalizePartyAccessToken, partyAccessTokenHash, type PartyAccessLinkRecord, type PartyAccessLinkStore } from '../lib/party-access';
+import { DAILY_ACCOUNT_ACCESS_NOTICE_CATEGORY, OFF_HOURS_NOTICE_CATEGORY, buildDailyAccountAccessNoticeReply, buildOffHoursNoticeReply, combineNoticeReplies, hasDailyAccountAccessNoticeToday, isSimpleAcknowledgement, shouldSendDailyAccountAccessNotice, shouldSendOffHoursNotice } from './auto-reply-daily-notice';
 
 const EMAIL_SERVER = "http://127.0.0.1:3001";
 const MANAGEMENT_HIDDEN_ACCOUNTS_PATH = '/home/ubuntu/.hermes/hermes-agent/graytag-aio-manager-0606/data/management-hidden-accounts.json';
@@ -1712,6 +1713,135 @@ function recentAutoReplyTimesForRoom(chatRoomUuid: string): string[] {
     .filter(Boolean);
 }
 
+function publicDashboardOrigin(): string {
+  const raw = String(process.env.DASHBOARD_PUBLIC_ORIGIN || process.env.PUBLIC_DASHBOARD_ORIGIN || 'https://email-verify.xyz').trim();
+  return raw.replace(/\/$/, '');
+}
+
+function partyAccessUrlFromToken(token: string): string {
+  return `${publicDashboardOrigin()}/dashboard/access/${encodeURIComponent(token)}`;
+}
+
+function autoReplyDailyGuideEnabled(): boolean {
+  return envFlag('AUTO_REPLY_ACCOUNT_GUIDE_ENABLED', true) && process.env.AUTO_REPLY_ENABLE_SEND === 'true';
+}
+
+function createAutoReplyPartyAccessUrl(job: any, persist = true): string | null {
+  const accountEmail = String(job.keepAcct || '').trim();
+  const serviceType = String(job.productType || '').trim();
+  const memberId = String(job.dealUsid || '').trim();
+  if (!accountEmail || !serviceType || !memberId) return null;
+  const token = createPartyAccessToken();
+  if (!persist) return partyAccessUrlFromToken(token);
+  const record = createPartyAccessLinkRecord({
+    token,
+    serviceType,
+    accountEmail,
+    fallbackPassword: String(job.keepPasswd || ''),
+    fallbackPin: String(job.fallbackPin || job.pin || ''),
+    profileName: String(job.profileName || job.buyerName || '파티원'),
+    emailAccessUrl: String(job.emailAccessUrl || ''),
+    member: {
+      kind: 'graytag',
+      memberId,
+      memberName: String(job.buyerName || '파티원'),
+      status: String(job.dealStatus || 'Using'),
+      statusName: String(job.statusName || job.lenderDealStatusName || job.dealStatus || '이용 중'),
+      startDateTime: job.startDateTime || null,
+      endDateTime: job.endDateTime || null,
+    },
+  });
+  const store = loadPartyAccessLinkStore();
+  savePartyAccessLinkStore({ ...store, [record.tokenHash]: record });
+  writeAudit({
+    actor: 'system',
+    action: 'party-access-link.create.auto-reply',
+    targetType: 'chatRoom',
+    targetId: String(job.chatRoomUuid || ''),
+    summary: 'auto-reply created party access link',
+    result: 'success',
+    requestId: `auto-reply-${Date.now()}`,
+    details: { serviceType, memberId, memberKind: 'graytag' },
+  });
+  return partyAccessUrlFromToken(token);
+}
+
+async function processDailyAutomatedNotice(job: any, dryRun: boolean): Promise<{ status: 'drafted' | 'sent' | 'blocked' | 'error' | 'ignored' } | null> {
+  if (!autoReplyDailyGuideEnabled()) return null;
+  const now = process.env.AUTO_REPLY_TEST_NOW ? new Date(process.env.AUTO_REPLY_TEST_NOW) : new Date();
+  if (hasDailyAccountAccessNoticeToday(AUTO_REPLY_MEMORY_STORE, job.chatRoomUuid, now) && isSimpleAcknowledgement(job.buyerMessage)) {
+    updateAutoReplyJobPersisted(AUTO_REPLY_MEMORY_STORE, job.id, {
+      status: 'ignored',
+      category: 'acknowledgement',
+      risk: 'low',
+      draftReply: '',
+      blockReason: '일일 계정 안내 후 단순 확인/감사 응답이라 자동응답 생략',
+    });
+    return { status: 'ignored' };
+  }
+
+  const parts: string[] = [];
+  const categories: string[] = [];
+  if (shouldSendDailyAccountAccessNotice(AUTO_REPLY_MEMORY_STORE, job.chatRoomUuid, now) && String(job.keepAcct || '').trim() && String(job.dealUsid || '').trim()) {
+    const accessUrl = createAutoReplyPartyAccessUrl(job);
+    if (accessUrl) {
+      parts.push(buildDailyAccountAccessNoticeReply(accessUrl));
+      categories.push(DAILY_ACCOUNT_ACCESS_NOTICE_CATEGORY);
+    }
+  }
+  if (shouldSendOffHoursNotice(AUTO_REPLY_MEMORY_STORE, job.chatRoomUuid, now)) {
+    parts.push(buildOffHoursNoticeReply());
+    categories.push(OFF_HOURS_NOTICE_CATEGORY);
+  }
+  const reply = combineNoticeReplies(parts);
+  if (!reply) return null;
+
+  const category = categories.join(',');
+  if (dryRun || process.env.AUTO_REPLY_ENABLE_SEND !== 'true') {
+    updateAutoReplyJobPersisted(AUTO_REPLY_MEMORY_STORE, job.id, {
+      status: 'drafted',
+      category,
+      risk: 'low',
+      draftReply: reply,
+      blockReason: dryRun ? 'dry-run' : 'AUTO_REPLY_ENABLE_SEND 꺼짐',
+    });
+    return { status: 'drafted' };
+  }
+
+  if (loadSafeModeConfig().enabled) {
+    updateAutoReplyJobPersisted(AUTO_REPLY_MEMORY_STORE, job.id, {
+      status: 'blocked',
+      category,
+      risk: 'low',
+      draftReply: reply,
+      blockReason: 'safe-mode enabled',
+    });
+    await notifyAutoReplyHuman(job, '세이프모드로 일일 계정 안내 자동발송 차단', 'warning');
+    return { status: 'blocked' };
+  }
+
+  try {
+    const sent = await sendGraytagChatMessage({ chatRoomUuid: job.chatRoomUuid, dealUsid: job.dealUsid, message: reply });
+    const ok = sent?.ok !== false;
+    updateAutoReplyJobPersisted(AUTO_REPLY_MEMORY_STORE, job.id, {
+      status: ok ? 'sent' : 'error',
+      category,
+      risk: 'low',
+      draftReply: reply,
+      blockReason: ok ? undefined : (sent.error || 'Graytag send failed'),
+    });
+    if (!ok) await notifyAutoReplyHuman(job, `일일 계정 안내 자동발송 실패: ${sent.error || 'unknown'}`, 'critical');
+    const route = routeAutoReply(job.buyerMessage || '');
+    if (route.risk === 'high') await notifyAutoReplyHuman(job, `첫 문의 자동 안내 후 추가 확인 필요: ${route.reason}`, 'critical');
+    return { status: ok ? 'sent' : 'error' };
+  } catch (e: any) {
+    const reason = e?.message || '일일 계정 안내 자동발송 예외';
+    updateAutoReplyJobPersisted(AUTO_REPLY_MEMORY_STORE, job.id, { status: 'error', category, risk: 'low', draftReply: reply, blockReason: reason });
+    await notifyAutoReplyHuman(job, `일일 계정 안내 자동발송 실패: ${reason}`, 'critical');
+    return { status: 'error' };
+  }
+}
+
 async function notifyAutoReplyHuman(job: any, reason: string, severity: 'warning' | 'critical' = 'warning') {
   await sendSellerAlert({
     key: `auto-reply-human-${job.chatRoomUuid}-${reason}`,
@@ -1752,6 +1882,9 @@ ${String(draftReply || '').slice(0, 1200)}` : '',
 }
 
 async function processAutoReplyJob(job: any, dryRun: boolean) {
+  const dailyNotice = await processDailyAutomatedNotice(job, dryRun);
+  if (dailyNotice) return dailyNotice;
+
   const route = routeAutoReply(job.buyerMessage);
   updateAutoReplyJobPersisted(AUTO_REPLY_MEMORY_STORE, job.id, { category: route.category, risk: route.risk });
   const policy = loadAutoReplyPolicyFromConfig();
@@ -1969,6 +2102,11 @@ async function scanAutoReplyCandidates(maxRooms = 10): Promise<any[]> {
         productType: deal.productTypeString,
         productName: deal.productName,
         keepAcct: deal.keepAcct,
+        keepPasswd: deal.keepPasswd,
+        dealStatus: deal.dealStatus,
+        statusName: deal.lenderDealStatusName || deal.dealStatus,
+        startDateTime: deal.startDateTime,
+        endDateTime: deal.endDateTime,
       };
       if (isBuyerTextMessage(candidate)) candidates.push(candidate);
     } catch {}
@@ -1988,6 +2126,7 @@ const autoReplyTickHandler = async (c: any) => {
   let blocked = 0;
   let errors = 0;
   let skipped = 0;
+  let ignored = 0;
 
   for (const candidate of candidates) {
     const text = normalizeBuyerMessage(candidate.message || '');
@@ -2002,6 +2141,14 @@ const autoReplyTickHandler = async (c: any) => {
       productType: candidate.productType,
       productName: candidate.productName,
       keepAcct: candidate.keepAcct,
+      keepPasswd: candidate.keepPasswd,
+      fallbackPin: candidate.fallbackPin,
+      emailAccessUrl: candidate.emailAccessUrl,
+      profileName: candidate.profileName,
+      dealStatus: candidate.dealStatus,
+      statusName: candidate.statusName || candidate.lenderDealStatusName,
+      startDateTime: candidate.startDateTime ?? null,
+      endDateTime: candidate.endDateTime ?? null,
       buyerMessage: text,
       messageTime: messageTimestamp(candidate),
     });
@@ -2020,13 +2167,14 @@ const autoReplyTickHandler = async (c: any) => {
       if (result.status === 'sent') sent += 1;
       if (result.status === 'error') errors += 1;
       if (result.status === 'blocked') blocked += 1;
+      if (result.status === 'ignored') ignored += 1;
     } catch (e: any) {
       errors += 1;
       updateAutoReplyJobPersisted(AUTO_REPLY_MEMORY_STORE, job.id, { status: 'error', blockReason: e?.message || 'auto-reply error' });
     }
   }
 
-  return c.json({ ok: true, scannedRooms: candidates.length, newJobs, queued, drafted, sent, blocked, errors, skipped });
+  return c.json({ ok: true, scannedRooms: candidates.length, newJobs, queued, drafted, sent, blocked, errors, skipped, ignored });
 };
 
 app.post('/chat/auto-reply/tick', autoReplyTickHandler);
@@ -3368,18 +3516,24 @@ function savePartyMaintenanceChecklistStore(store: PartyMaintenanceChecklistStor
   writeFileSync(PARTY_MAINTENANCE_CHECKLIST_PATH, JSON.stringify(store, null, 2), 'utf8');
 }
 
+function partyAccessLinksPath(): string {
+  return process.env.PARTY_ACCESS_LINKS_PATH || PARTY_ACCESS_LINKS_PATH;
+}
+
 function loadPartyAccessLinkStore(): PartyAccessLinkStore {
   try {
-    if (!existsSync(PARTY_ACCESS_LINKS_PATH)) return {};
-    const raw = JSON.parse(readFileSync(PARTY_ACCESS_LINKS_PATH, 'utf8'));
+    const path = partyAccessLinksPath();
+    if (!existsSync(path)) return {};
+    const raw = JSON.parse(readFileSync(path, 'utf8'));
     return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
   } catch { return {}; }
 }
 
 function savePartyAccessLinkStore(store: PartyAccessLinkStore) {
-  const dir = PARTY_ACCESS_LINKS_PATH.replace(/\/[^\/]+$/, '');
+  const path = partyAccessLinksPath();
+  const dir = path.replace(/\/[^\/]+$/, '');
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  writeFileSync(PARTY_ACCESS_LINKS_PATH, JSON.stringify(store, null, 2), 'utf8');
+  writeFileSync(path, JSON.stringify(store, null, 2), 'utf8');
 }
 
 function partyAccessShareUrl(c: any, token: string): string {
